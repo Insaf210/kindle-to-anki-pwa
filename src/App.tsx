@@ -23,8 +23,10 @@ function normalizeValue(value: string) {
   return value.trim().toLowerCase().replace(/\s+/g, ' ')
 }
 
-function escapeCsvValue(value: string) {
-  return `"${value.replace(/"/g, '""')}"`
+function escapeCsvValue(value: string | number | null | undefined) {
+  const textValue = String(value ?? '')
+
+  return `"${textValue.replace(/"/g, '""')}"`
 }
 
 function highlightTargetWord(sentence: string, targetWord: string) {
@@ -257,7 +259,10 @@ function App() {
         .map(escapeCsvValue)
         .join(','),
     )
-    const csvContent = [csvHeader.join(','), ...csvRows].join('\r\n')
+    const csvContent = [
+      csvHeader.map(escapeCsvValue).join(','),
+      ...csvRows,
+    ].join('\r\n')
     const today = new Date().toISOString().slice(0, 10)
     const blob = new Blob([csvContent], {
       type: 'text/csv;charset=utf-8',
