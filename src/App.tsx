@@ -1,121 +1,428 @@
-import { useState } from 'react'
-import reactLogo from './assets/react.svg'
-import viteLogo from './assets/vite.svg'
-import heroImg from './assets/hero.png'
+import { useEffect, useState } from 'react'
 import './App.css'
 
+const initialSentence = 'This is an example sentence.'
+const cardsStorageKey = 'send-to-anki-cards'
+
+type SavedCard = {
+  id: string
+  sentence: string
+  targetWord: string
+  createdAt: string
+  meaning?: string
+  explanation?: string
+  exportedAt?: string | null
+}
+
+type TranslationResult = {
+  meaning: string
+  explanation: string
+}
+
+function normalizeValue(value: string) {
+  return value.trim().toLowerCase().replace(/\s+/g, ' ')
+}
+
+function escapeCsvValue(value: string) {
+  return `"${value.replace(/"/g, '""')}"`
+}
+
 function App() {
-  const [count, setCount] = useState(0)
+  const [sentence, setSentence] = useState(initialSentence)
+  const [selectedWord, setSelectedWord] = useState('')
+  const [clipboardError, setClipboardError] = useState('')
+  const [cardError, setCardError] = useState('')
+  const [exportError, setExportError] = useState('')
+  const [translationError, setTranslationError] = useState('')
+  const [isGenerating, setIsGenerating] = useState(false)
+  const [translation, setTranslation] = useState<TranslationResult | null>(
+    null,
+  )
+  const [cards, setCards] = useState<SavedCard[]>([])
+  const [cardsLoaded, setCardsLoaded] = useState(false)
+
+  const words = sentence.trim().split(/\s+/).filter(Boolean)
+
+  useEffect(() => {
+    const savedCards = localStorage.getItem(cardsStorageKey)
+
+    if (!savedCards) {
+      setCardsLoaded(true)
+      return
+    }
+
+    try {
+      const parsedCards = JSON.parse(savedCards)
+
+      if (Array.isArray(parsedCards)) {
+        setCards(
+          (parsedCards as SavedCard[]).map((card) => ({
+            ...card,
+            exportedAt: card.exportedAt ?? null,
+          })),
+        )
+      }
+    } catch {
+      localStorage.removeItem(cardsStorageKey)
+    }
+
+    setCardsLoaded(true)
+  }, [])
+
+  useEffect(() => {
+    if (!cardsLoaded) {
+      return
+    }
+
+    localStorage.setItem(cardsStorageKey, JSON.stringify(cards))
+  }, [cards, cardsLoaded])
+
+  function updateSentence(nextSentence: string) {
+    setSentence(nextSentence)
+    setSelectedWord('')
+    setClipboardError('')
+    setCardError('')
+    setExportError('')
+    setTranslationError('')
+    setTranslation(null)
+  }
+
+  function selectWord(word: string) {
+    setSelectedWord(word)
+    setCardError('')
+    setExportError('')
+    setTranslationError('')
+    setTranslation(null)
+  }
+
+  async function pasteFromClipboard() {
+    setClipboardError('')
+
+    try {
+      const clipboardText = await navigator.clipboard.readText()
+      const nextSentence = clipboardText.trim()
+
+      if (!nextSentence) {
+        setClipboardError('Die Zwischenablage ist leer.')
+        return
+      }
+
+      updateSentence(nextSentence)
+    } catch {
+      setClipboardError('Zwischenablage konnte nicht gelesen werden.')
+    }
+  }
+
+  async function generateMeaning() {
+    const cleanedSentence = sentence.trim()
+    const cleanedTargetWord = selectedWord.trim()
+
+    setTranslationError('')
+    setCardError('')
+
+    if (!cleanedSentence) {
+      setTranslation(null)
+      setTranslationError('Der Satz darf nicht leer sein.')
+      return
+    }
+
+    if (!cleanedTargetWord) {
+      setTranslation(null)
+      setTranslationError('Bitte w\u00e4hle ein Zielwort aus.')
+      return
+    }
+
+    setIsGenerating(true)
+
+    try {
+      const response = await fetch('http://localhost:3001/api/translate', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          sentence: cleanedSentence,
+          targetWord: cleanedTargetWord,
+        }),
+      })
+
+      const data = await response.json()
+
+      if (!response.ok) {
+        setTranslation(null)
+        setTranslationError(data.error || 'Bedeutung konnte nicht generiert werden.')
+        return
+      }
+
+      setTranslation({
+        meaning: data.meaning,
+        explanation: data.explanation,
+      })
+    } catch {
+      setTranslation(null)
+      setTranslationError('Backend konnte nicht erreicht werden.')
+    } finally {
+      setIsGenerating(false)
+    }
+  }
+
+  function saveCard() {
+    const cleanedSentence = sentence.trim()
+    const cleanedTargetWord = selectedWord.trim()
+
+    if (!cleanedSentence) {
+      setCardError('Der Satz darf nicht leer sein.')
+      return
+    }
+
+    if (!cleanedTargetWord) {
+      setCardError('Bitte w\u00e4hle ein Zielwort aus.')
+      return
+    }
+
+    if (!translation?.meaning) {
+      setCardError('Bitte zuerst Bedeutung generieren.')
+      return
+    }
+
+    const normalizedSentence = normalizeValue(cleanedSentence)
+    const normalizedTargetWord = normalizeValue(cleanedTargetWord)
+    const sentenceExists = cards.some(
+      (card) => normalizeValue(card.sentence) === normalizedSentence,
+    )
+    const targetWordExists = cards.some(
+      (card) => normalizeValue(card.targetWord) === normalizedTargetWord,
+    )
+
+    if (sentenceExists && targetWordExists) {
+      setCardError('Dieser Satz und dieses Zielwort existieren bereits.')
+      return
+    }
+
+    if (sentenceExists) {
+      setCardError('Dieser Satz existiert bereits.')
+      return
+    }
+
+    if (targetWordExists) {
+      setCardError('Dieses Zielwort existiert bereits.')
+      return
+    }
+
+    const newCard: SavedCard = {
+      id: Date.now().toString(),
+      sentence: cleanedSentence,
+      targetWord: cleanedTargetWord,
+      meaning: translation.meaning,
+      explanation: translation.explanation,
+      createdAt: new Date().toISOString(),
+      exportedAt: null,
+    }
+
+    setCards((currentCards) => [newCard, ...currentCards])
+    setCardError('')
+  }
+
+  function exportNewCardsAsCsv() {
+    const newCards = cards.filter((card) => card.exportedAt === null)
+
+    setExportError('')
+
+    if (newCards.length === 0) {
+      setExportError('Keine neuen Karten zum Exportieren.')
+      return
+    }
+
+    const csvHeader = [
+      'CardId',
+      'Sentence',
+      'Target',
+      'Meaning',
+      'Explanation',
+      'Source',
+    ]
+    const csvRows = newCards.map((card) =>
+      [
+        card.id,
+        card.sentence,
+        card.targetWord,
+        card.meaning || '',
+        card.explanation || '',
+        'Kindle',
+      ]
+        .map(escapeCsvValue)
+        .join(','),
+    )
+    const csvContent = [csvHeader.join(','), ...csvRows].join('\r\n')
+    const today = new Date().toISOString().slice(0, 10)
+    const blob = new Blob([csvContent], {
+      type: 'text/csv;charset=utf-8',
+    })
+    const downloadUrl = URL.createObjectURL(blob)
+    const downloadLink = document.createElement('a')
+
+    downloadLink.href = downloadUrl
+    downloadLink.download = `kindle-to-anki-export-${today}.csv`
+    document.body.appendChild(downloadLink)
+    downloadLink.click()
+    downloadLink.remove()
+    URL.revokeObjectURL(downloadUrl)
+
+    const exportedAt = new Date().toISOString()
+    const exportedIds = new Set(newCards.map((card) => card.id))
+
+    setCards((currentCards) =>
+      currentCards.map((card) =>
+        exportedIds.has(card.id) ? { ...card, exportedAt } : card,
+      ),
+    )
+  }
 
   return (
-    <>
-      <section id="center">
-        <div className="hero">
-          <img src={heroImg} className="base" width="170" height="179" alt="" />
-          <img src={reactLogo} className="framework" alt="React logo" />
-          <img src={viteLogo} className="vite" alt="Vite logo" />
-        </div>
-        <div>
-          <h1>Get started</h1>
-          <p>
-            Edit <code>src/App.tsx</code> and save to test <code>HMR</code>
+    <main className="app-shell">
+      <section className="overlay-panel" aria-label="Send to Anki word picker">
+        <header className="app-header">
+          <p className="app-kicker">Kindle overlay</p>
+          <h1>Send to Anki</h1>
+        </header>
+
+        <section className="sentence-card" aria-label="Sentence">
+          <label className="input-label" htmlFor="sentence-input">
+            Satz
+          </label>
+          <textarea
+            className="sentence-input"
+            id="sentence-input"
+            value={sentence}
+            onChange={(event) => updateSentence(event.target.value)}
+            rows={5}
+          />
+          <button
+            className="clipboard-button"
+            type="button"
+            onClick={pasteFromClipboard}
+          >
+            {'Aus Zwischenablage einf\u00fcgen'}
+          </button>
+          {clipboardError ? (
+            <p className="error-message" role="alert">
+              {clipboardError}
+            </p>
+          ) : null}
+
+          <div className="word-list" aria-label="Selectable words">
+            {words.map((word, index) => {
+              const isSelected = selectedWord === word
+
+              return (
+                <button
+                  className={`word-chip${isSelected ? ' selected' : ''}`}
+                  key={`${word}-${index}`}
+                  type="button"
+                  onClick={() => selectWord(word)}
+                  aria-pressed={isSelected}
+                >
+                  {word}
+                </button>
+              )
+            })}
+          </div>
+        </section>
+
+        <section className="selected-panel" aria-label="Selected word">
+          <p className="panel-label">{'Ausgew\u00e4hltes Wort'}</p>
+          <p className="selected-word">
+            {selectedWord || 'Noch kein Wort ausgew\u00e4hlt'}
           </p>
-        </div>
-        <button
-          type="button"
-          className="counter"
-          onClick={() => setCount((count) => count + 1)}
-        >
-          Count is {count}
-        </button>
+          <button
+            className="generate-button"
+            type="button"
+            onClick={generateMeaning}
+            disabled={isGenerating}
+          >
+            {isGenerating ? 'Generiere Bedeutung...' : 'Bedeutung generieren'}
+          </button>
+          {translationError ? (
+            <p className="error-message" role="alert">
+              {translationError}
+            </p>
+          ) : null}
+        </section>
+
+        <section className="result-panel" aria-label="Translation result">
+          <p className="panel-label">KI-Ergebnis</p>
+          {translation ? (
+            <div className="result-content">
+              <p className="result-meaning">{translation.meaning}</p>
+              <p className="result-explanation">{translation.explanation}</p>
+            </div>
+          ) : (
+            <p className="empty-state">Noch keine Bedeutung generiert.</p>
+          )}
+        </section>
+
+        <section className="selected-panel" aria-label="Save card">
+          <p className="panel-label">Karte</p>
+          <button className="save-button" type="button" onClick={saveCard}>
+            Karte speichern
+          </button>
+          {cardError ? (
+            <p className="error-message" role="alert">
+              {cardError}
+            </p>
+          ) : null}
+        </section>
+
+        <section className="cards-panel" aria-label="Saved cards">
+          <div className="cards-header">
+            <p className="panel-label">Gespeicherte Karten</p>
+            <span className="card-count">{cards.length}</span>
+          </div>
+          <button
+            className="export-button"
+            type="button"
+            onClick={exportNewCardsAsCsv}
+          >
+            Neue Karten als CSV exportieren
+          </button>
+          {exportError ? (
+            <p className="error-message" role="alert">
+              {exportError}
+            </p>
+          ) : null}
+          {cards.length > 0 ? (
+            <ul className="card-list">
+              {cards.map((card) => (
+                <li className="saved-card" key={card.id}>
+                  <div className="card-title-row">
+                    <p className="card-word">{card.targetWord}</p>
+                    <span
+                      className={`export-status${
+                        card.exportedAt ? ' exported' : ''
+                      }`}
+                    >
+                      {card.exportedAt ? 'Exportiert' : 'Neu'}
+                    </span>
+                  </div>
+                  {card.meaning ? (
+                    <p className="card-meaning">{card.meaning}</p>
+                  ) : null}
+                  <p className="card-sentence">{card.sentence}</p>
+                  {card.explanation ? (
+                    <p className="card-explanation">{card.explanation}</p>
+                  ) : null}
+                  <time className="card-date" dateTime={card.createdAt}>
+                    {new Date(card.createdAt).toLocaleString()}
+                  </time>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="empty-state">Noch keine Karten gespeichert.</p>
+          )}
+        </section>
       </section>
-
-      <div className="ticks"></div>
-
-      <section id="next-steps">
-        <div id="docs">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#documentation-icon"></use>
-          </svg>
-          <h2>Documentation</h2>
-          <p>Your questions, answered</p>
-          <ul>
-            <li>
-              <a href="https://vite.dev/" target="_blank">
-                <img className="logo" src={viteLogo} alt="" />
-                Explore Vite
-              </a>
-            </li>
-            <li>
-              <a href="https://react.dev/" target="_blank">
-                <img className="button-icon" src={reactLogo} alt="" />
-                Learn more
-              </a>
-            </li>
-          </ul>
-        </div>
-        <div id="social">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#social-icon"></use>
-          </svg>
-          <h2>Connect with us</h2>
-          <p>Join the Vite community</p>
-          <ul>
-            <li>
-              <a href="https://github.com/vitejs/vite" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#github-icon"></use>
-                </svg>
-                GitHub
-              </a>
-            </li>
-            <li>
-              <a href="https://chat.vite.dev/" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#discord-icon"></use>
-                </svg>
-                Discord
-              </a>
-            </li>
-            <li>
-              <a href="https://x.com/vite_js" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#x-icon"></use>
-                </svg>
-                X.com
-              </a>
-            </li>
-            <li>
-              <a href="https://bsky.app/profile/vite.dev" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#bluesky-icon"></use>
-                </svg>
-                Bluesky
-              </a>
-            </li>
-          </ul>
-        </div>
-      </section>
-
-      <div className="ticks"></div>
-      <section id="spacer"></section>
-    </>
+    </main>
   )
 }
 
