@@ -135,7 +135,7 @@ function App() {
     setIsGenerating(true)
 
     try {
-      const response = await fetch('http://localhost:3001/api/translate', {
+      const response = await fetch('https://kindle-to-anki-api.insafhamzu24.workers.dev/', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
