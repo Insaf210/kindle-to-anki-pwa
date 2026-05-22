@@ -340,7 +340,7 @@ function App() {
             onClick={generateMeaning}
             disabled={isGenerating}
           >
-            {isGenerating ? 'Generiere Bedeutung...' : 'Bedeutung generieren'}
+            {isGenerating ? 'Generating...' : 'Bedeutung generieren'}
           </button>
           {translationError ? (
             <p className="error-message" role="alert">
