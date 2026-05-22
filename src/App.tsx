@@ -27,6 +27,10 @@ function escapeCsvValue(value: string) {
   return `"${value.replace(/"/g, '""')}"`
 }
 
+function highlightTargetWord(sentence: string, targetWord: string) {
+  return sentence.replace(targetWord, (match) => `<b>${match}</b>`)
+}
+
 function App() {
   const [sentence, setSentence] = useState(initialSentence)
   const [selectedWord, setSelectedWord] = useState('')
@@ -244,7 +248,7 @@ function App() {
     const csvRows = newCards.map((card) =>
       [
         card.id,
-        card.sentence,
+        highlightTargetWord(card.sentence, card.targetWord),
         card.targetWord,
         card.meaning || '',
         card.explanation || '',
