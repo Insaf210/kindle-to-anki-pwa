@@ -242,6 +242,33 @@ function App() {
     setTranslations({})
   }
 
+  function createPhrase() {
+    const selectedIndexes = selectedWords
+      .map((selectedWord) => words.findIndex((word) => word === selectedWord))
+      .filter((index) => index !== -1)
+      .sort((firstIndex, secondIndex) => firstIndex - secondIndex)
+
+    const hasAdjacentWords = selectedIndexes.every((index, arrayIndex) => {
+      if (arrayIndex === 0) {
+        return true
+      }
+
+      return index === selectedIndexes[arrayIndex - 1] + 1
+    })
+
+    if (!hasAdjacentWords || selectedIndexes.length !== selectedWords.length) {
+      setCardError('Phrase words must be next to each other.')
+      return
+    }
+
+    const phrase = selectedIndexes.map((index) => words[index]).join(' ')
+
+    setSelectedWords([phrase])
+    setCardError('')
+    setTranslationError('')
+    setTranslations({})
+  }
+
   async function pasteFromClipboard() {
     setClipboardError('')
 
@@ -626,6 +653,16 @@ function App() {
                 : selectedWords.length === 1
                   ? 'Generate'
                   : 'Generate all'}
+            </button>
+          ) : null}
+          {selectedWords.length >= 2 ? (
+            <button
+              className="export-button"
+              type="button"
+              onClick={createPhrase}
+              disabled={isGenerating}
+            >
+              Create phrase
             </button>
           ) : null}
           {translationError ? (
