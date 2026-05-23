@@ -86,6 +86,7 @@ function isValidBackupCard(card: unknown): card is SavedCard {
 
 function App() {
   const backupInputRef = useRef<HTMLInputElement>(null)
+  const lastClipboardPromptRef = useRef('')
   const [sentence, setSentence] = useState(initialSentence)
   const [sentences, setSentences] = useState<string[]>([])
   const [currentSentenceIndex, setCurrentSentenceIndex] = useState(0)
@@ -157,6 +158,60 @@ function App() {
     resetSentenceWork(nextSentence)
   }
 
+  function applyPastedText(nextSentence: string) {
+    const pastedSentences = splitTextIntoSentences(nextSentence)
+
+    lastClipboardPromptRef.current = nextSentence
+
+    if (pastedSentences.length > 1) {
+      setSentences(pastedSentences)
+      setCurrentSentenceIndex(0)
+      resetSentenceWork(pastedSentences[0])
+      return
+    }
+
+    updateSentence(nextSentence)
+  }
+
+  useEffect(() => {
+    async function detectClipboardText() {
+      if (!navigator.clipboard?.readText) {
+        return
+      }
+
+      try {
+        const clipboardText = (await navigator.clipboard.readText()).trim()
+        const currentSentence = sentence.trim()
+
+        if (
+          clipboardText &&
+          clipboardText !== currentSentence &&
+          clipboardText !== lastClipboardPromptRef.current
+        ) {
+          applyPastedText(clipboardText)
+        }
+      } catch {
+        // Some browsers only allow clipboard reads after user interaction.
+      }
+    }
+
+    detectClipboardText()
+
+    function handleAppActive() {
+      if (document.visibilityState === 'visible') {
+        detectClipboardText()
+      }
+    }
+
+    document.addEventListener('visibilitychange', handleAppActive)
+    window.addEventListener('focus', detectClipboardText)
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleAppActive)
+      window.removeEventListener('focus', detectClipboardText)
+    }
+  }, [sentence])
+
   function moveToSentence(nextIndex: number) {
     if (nextIndex >= sentences.length) {
       setSentences([])
@@ -198,16 +253,7 @@ function App() {
         return
       }
 
-      const pastedSentences = splitTextIntoSentences(nextSentence)
-
-      if (pastedSentences.length > 1) {
-        setSentences(pastedSentences)
-        setCurrentSentenceIndex(0)
-        resetSentenceWork(pastedSentences[0])
-        return
-      }
-
-      updateSentence(nextSentence)
+      applyPastedText(nextSentence)
     } catch {
       setClipboardError('Zwischenablage konnte nicht gelesen werden.')
     }
