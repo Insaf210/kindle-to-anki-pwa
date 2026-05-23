@@ -185,7 +185,7 @@ function App() {
     setCardError('')
 
     if (!cleanedSentence) {
-      setTranslation(null)
+      setTranslations({})
       setTranslationError('Der Satz darf nicht leer sein.')
       return
     }
@@ -258,13 +258,19 @@ function App() {
     }
 
     const normalizedSentence = normalizeValue(cleanedSentence)
-    const duplicateTargetWord = cleanedTargetWords.find((targetWord) =>
-      cards.some(
-        (card) =>
-          normalizeValue(card.sentence) === normalizedSentence &&
-          normalizeValue(card.targetWord) === normalizeValue(targetWord),
-      ),
-    )
+    const duplicateTargetWord = cleanedTargetWords.find((targetWord) => {
+      const normalizedTargetWord = normalizeValue(targetWord)
+
+      return cards.some((card) => {
+        const existingSentence = normalizeValue(card.sentence)
+        const existingTargetWord = normalizeValue(card.targetWord)
+
+        return (
+          normalizedSentence === existingSentence &&
+          normalizedTargetWord === existingTargetWord
+        )
+      })
+    })
 
     if (duplicateTargetWord) {
       setCardError(`Diese Karte existiert bereits: ${duplicateTargetWord}`)
