@@ -4,8 +4,35 @@ import './App.css'
 const initialSentence = 'This is an example sentence.'
 const cardsStorageKey = 'send-to-anki-cards'
 const lastBackupStorageKey = 'send-to-anki-last-backup-at'
+const translationApiUrl = 'https://kindle-to-anki-api.insafhamzu24.workers.dev/'
 const backupReminderCardCount = 50
-const recentBackupDays = 30
+const recentBackupDays = 7
+const phraseSuggestionPatterns = [
+  /\blook(?:s|ed|ing)?\s+forward\s+to\b/gi,
+  /\bgive(?:s|n|ing)?\s+up\b|\bgave\s+up\b/gi,
+  /\bturn(?:s|ed|ing)?\s+out\b/gi,
+  /\brun(?:s|ning)?\s+into\b|\bran\s+into\b/gi,
+  /\bcome(?:s|ing)?\s+across\b|\bcame\s+across\b/gi,
+  /\bfind(?:s|ing)?\s+out\b|\bfound\s+out\b/gi,
+  /\btake(?:s|n|ing)?\s+off\b|\btook\s+off\b/gi,
+  /\bput(?:s|ting)?\s+up\s+with\b/gi,
+  /\bget(?:s|ting)?\s+along\b|\bgot\s+along\b/gi,
+  /\blook(?:s|ed|ing)?\s+after\b/gi,
+  /\bin\s+order\s+to\b/gi,
+  /\bas\s+soon\s+as\b/gi,
+  /\beven\s+though\b/gi,
+]
+const allowedLanguageStyles = [
+  'simple',
+  'everyday',
+  'formal',
+  'informal',
+  'slang',
+  'business',
+  'academic',
+  'literary',
+  'advanced',
+]
 
 type SavedCard = {
   id: string
@@ -16,17 +43,21 @@ type SavedCard = {
   explanation?: string
   source?: string
   tags?: string
+  languageStyle?: string
+  quality?: CardQuality
   exportedAt?: string | null
 }
 
 type TranslationResult = {
   meaning: string
   explanation: string
+  languageStyle?: string
 }
 
 type CardStatusFilter = 'all' | 'new' | 'exported'
 type CardSearchMode = 'target' | 'everywhere'
-type CsvExportMode = 'new' | 'all'
+type CsvExportMode = 'new' | 'all' | 'selected'
+type CardQuality = 'good' | 'needs edit' | 'hard' | 'important'
 
 type BackupData = {
   app: string
@@ -99,22 +130,71 @@ function highlightSearchText(value: string, searchText: string) {
 }
 
 function splitTextIntoSentences(text: string) {
-  const textParts = text.split('.')
-  const textEndsWithPeriod = text.trim().endsWith('.')
-
-  return textParts
-    .map((part, index) => {
-      const sentencePart = part.trim()
-      const isLastPart = index === textParts.length - 1
-      const shouldKeepPeriod = !isLastPart || textEndsWithPeriod
-
-      if (!sentencePart) {
-        return ''
-      }
-
-      return shouldKeepPeriod ? `${sentencePart}.` : sentencePart
-    })
+  return (text.match(/[^.!?]+[.!?]+|[^.!?]+$/g) || [])
+    .map((sentencePart) => sentencePart.trim())
     .filter(Boolean)
+}
+
+function findLocalPhraseSuggestions(sentence: string) {
+  const foundPhrases = phraseSuggestionPatterns.flatMap((pattern) => {
+    const matches = sentence.match(pattern) || []
+
+    return matches.map((match) => match.trim())
+  })
+
+  return Array.from(new Set(foundPhrases))
+}
+
+function inferLanguageStyle(targetWord: string, sentence: string) {
+  const normalizedText = normalizeValue(`${targetWord} ${sentence}`)
+
+  if (/\b(kinda|gonna|wanna|ain't|dude|yep|nah)\b/.test(normalizedText)) {
+    return 'slang'
+  }
+
+  if (/\b(cool|okay|ok|pretty much|hang out)\b/.test(normalizedText)) {
+    return 'informal'
+  }
+
+  if (/\b(revenue|profit|market|company|growth|strategy|customer|sustainable growth)\b/.test(normalizedText)) {
+    return 'business'
+  }
+
+  if (/\b(research|theory|analysis|hypothesis|method|evidence|emphasized|significant)\b/.test(normalizedText)) {
+    return 'academic'
+  }
+
+  if (/\b(thou|whilst|upon|beneath|amid|overcame|gazed|whispered)\b/.test(normalizedText)) {
+    return 'literary'
+  }
+
+  if (/\b(hence|therefore|moreover|subsequently|nevertheless|emphasized)\b/.test(normalizedText)) {
+    return 'formal'
+  }
+
+  if (targetWord.length > 9 || targetWord.split(/\s+/).length > 2) {
+    return 'advanced'
+  }
+
+  return 'everyday'
+}
+
+function cleanLanguageStyle(
+  value: string | undefined,
+  targetWord: string,
+  sentence: string,
+) {
+  const normalizedStyle = normalizeValue(value || '')
+
+  if (
+    normalizedStyle &&
+    normalizedStyle !== 'simple' &&
+    allowedLanguageStyles.includes(normalizedStyle)
+  ) {
+    return normalizedStyle
+  }
+
+  return inferLanguageStyle(targetWord, sentence)
 }
 
 function isValidBackupCard(card: unknown): card is SavedCard {
@@ -138,14 +218,19 @@ function App() {
   const [sentence, setSentence] = useState(initialSentence)
   const [sessionSource, setSessionSource] = useState('Kindle')
   const [sessionTags, setSessionTags] = useState('')
+  const [sessionQuality, setSessionQuality] = useState<CardQuality>('good')
   const [sentences, setSentences] = useState<string[]>([])
   const [currentSentenceIndex, setCurrentSentenceIndex] = useState(0)
   const [selectedWords, setSelectedWords] = useState<string[]>([])
+  const [phraseSuggestions, setPhraseSuggestions] = useState<string[]>([])
+  const [isSuggestingPhrases, setIsSuggestingPhrases] = useState(false)
   const [clipboardError, setClipboardError] = useState('')
   const [cardError, setCardError] = useState('')
   const [exportError, setExportError] = useState('')
   const [backupError, setBackupError] = useState('')
   const [translationError, setTranslationError] = useState('')
+  const [speechError, setSpeechError] = useState('')
+  const [offlineWarning, setOfflineWarning] = useState('')
   const [isGenerating, setIsGenerating] = useState(false)
   const [translations, setTranslations] = useState<
     Record<string, TranslationResult>
@@ -162,6 +247,7 @@ function App() {
   const [editDraft, setEditDraft] = useState<SavedCard | null>(null)
   const [lastDeletedCard, setLastDeletedCard] = useState<SavedCard | null>(null)
   const [lastBackupExportAt, setLastBackupExportAt] = useState('')
+  const [selectedCardIds, setSelectedCardIds] = useState<string[]>([])
   const [savedCardsError, setSavedCardsError] = useState('')
 
   const words = sentence.trim().split(/\s+/).filter(Boolean)
@@ -180,6 +266,8 @@ function App() {
               card.explanation || '',
               card.source || '',
               card.tags || '',
+              card.languageStyle || '',
+              card.quality || '',
             ]
       const matchesSearch =
         !normalizedCardSearch ||
@@ -212,7 +300,8 @@ function App() {
     Date.now() - new Date(lastBackupExportAt).getTime() <
       recentBackupDays * 24 * 60 * 60 * 1000
   const shouldShowBackupReminder =
-    cards.length >= backupReminderCardCount && !backupIsRecent
+    cards.length >= backupReminderCardCount ||
+    (Boolean(lastBackupExportAt) && !backupIsRecent)
 
   useEffect(() => {
     const savedCards = localStorage.getItem(cardsStorageKey)
@@ -234,6 +323,7 @@ function App() {
         setCards(
           (parsedCards as SavedCard[]).map((card) => ({
             ...card,
+            quality: card.quality || 'good',
             exportedAt: card.exportedAt ?? null,
           })),
         )
@@ -253,6 +343,26 @@ function App() {
     localStorage.setItem(cardsStorageKey, JSON.stringify(cards))
   }, [cards, cardsLoaded])
 
+  useEffect(() => {
+    function updateConnectionStatus() {
+      if ('onLine' in navigator && !navigator.onLine) {
+        setOfflineWarning('You appear to be offline. AI features may not work.')
+        return
+      }
+
+      setOfflineWarning('')
+    }
+
+    updateConnectionStatus()
+    window.addEventListener('online', updateConnectionStatus)
+    window.addEventListener('offline', updateConnectionStatus)
+
+    return () => {
+      window.removeEventListener('online', updateConnectionStatus)
+      window.removeEventListener('offline', updateConnectionStatus)
+    }
+  }, [])
+
   function resetSentenceWork(nextSentence: string) {
     setSentence(nextSentence)
     setSelectedWords([])
@@ -261,6 +371,7 @@ function App() {
     setExportError('')
     setBackupError('')
     setTranslationError('')
+    setPhraseSuggestions([])
     setTranslations({})
   }
 
@@ -350,7 +461,104 @@ function App() {
     setExportError('')
     setBackupError('')
     setTranslationError('')
+    setSpeechError('')
+    setPhraseSuggestions([])
     setTranslations({})
+  }
+
+  function addSuggestedPhrase(phrase: string) {
+    setSelectedWords((currentWords) =>
+      currentWords.includes(phrase) ? currentWords : [...currentWords, phrase],
+    )
+    setCardError('')
+    setTranslationError('')
+    setTranslations({})
+  }
+
+  async function suggestPhrases() {
+    const cleanedSentence = sentence.trim()
+
+    setTranslationError('')
+    setCardError('')
+
+    if (!cleanedSentence) {
+      setTranslationError('Der Satz darf nicht leer sein.')
+      return
+    }
+
+    setIsSuggestingPhrases(true)
+
+    try {
+      let suggestions: string[] = []
+
+      if (!('onLine' in navigator) || navigator.onLine) {
+        try {
+          const response = await fetch(translationApiUrl, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              action: 'suggestPhrases',
+              sentence: cleanedSentence,
+            }),
+          })
+          const data = await response.json()
+
+          if (response.ok && Array.isArray(data.phrases)) {
+            suggestions = data.phrases
+              .filter((phrase: unknown) => typeof phrase === 'string')
+              .map((phrase: string) => phrase.trim())
+              .filter(Boolean)
+          }
+        } catch {
+          suggestions = []
+        }
+      }
+
+      if (suggestions.length === 0) {
+        suggestions = findLocalPhraseSuggestions(cleanedSentence)
+      }
+
+      setPhraseSuggestions(suggestions)
+
+      if (suggestions.length === 0) {
+        setTranslationError('No useful phrases found.')
+      }
+    } finally {
+      setIsSuggestingPhrases(false)
+    }
+  }
+
+  function speakText(text: string) {
+    const cleanedText = text.trim()
+
+    if (!cleanedText) {
+      return
+    }
+
+    if (
+      !('speechSynthesis' in window) ||
+      !('SpeechSynthesisUtterance' in window)
+    ) {
+      setSpeechError('Speech not supported on this device/browser.')
+      return
+    }
+
+    const utterance = new SpeechSynthesisUtterance(cleanedText)
+    const englishVoice = window.speechSynthesis
+      .getVoices()
+      .find((voice) => voice.lang === 'en-US' || voice.lang.startsWith('en'))
+
+    window.speechSynthesis.cancel()
+    utterance.lang = englishVoice?.lang || 'en-US'
+
+    if (englishVoice) {
+      utterance.voice = englishVoice
+    }
+
+    setSpeechError('')
+    window.speechSynthesis.speak(utterance)
   }
 
   function createPhrase() {
@@ -419,6 +627,14 @@ function App() {
       return
     }
 
+    if ('onLine' in navigator && !navigator.onLine) {
+      setTranslations({})
+      setTranslationError(
+        'AI service could not be reached. Check your connection and try again.',
+      )
+      return
+    }
+
     setIsGenerating(true)
 
     try {
@@ -426,10 +642,11 @@ function App() {
         ...translations,
       }
       const failedWords: string[] = []
+      let serviceCouldNotBeReached = false
 
       for (const targetWord of cleanedTargetWords) {
         try {
-          const response = await fetch('https://kindle-to-anki-api.insafhamzu24.workers.dev/', {
+          const response = await fetch(translationApiUrl, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
@@ -450,15 +667,25 @@ function App() {
           nextTranslations[getTranslationKey(targetWord)] = {
             meaning: data.meaning,
             explanation: data.explanation,
+            languageStyle: cleanLanguageStyle(
+              data.languageStyle,
+              targetWord,
+              cleanedSentence,
+            ),
           }
         } catch {
+          serviceCouldNotBeReached = true
           failedWords.push(targetWord)
         }
       }
 
       setTranslations(nextTranslations)
 
-      if (failedWords.length > 0) {
+      if (serviceCouldNotBeReached) {
+        setTranslationError(
+          'AI service could not be reached. Check your connection and try again.',
+        )
+      } else if (failedWords.length > 0) {
         setTranslationError(
           `Keine Bedeutung generiert f\u00fcr: ${failedWords.join(', ')}`,
         )
@@ -548,8 +775,11 @@ function App() {
       targetWord,
       meaning: translations[getTranslationKey(targetWord)].meaning,
       explanation: translations[getTranslationKey(targetWord)].explanation,
+      languageStyle:
+        translations[getTranslationKey(targetWord)].languageStyle || 'simple',
       source: cleanedSource,
       tags: cleanedTags,
+      quality: sessionQuality,
       createdAt,
       exportedAt: null,
     }))
@@ -562,6 +792,8 @@ function App() {
     const cardsToExport =
       exportMode === 'new'
         ? cards.filter((card) => card.exportedAt === null)
+        : exportMode === 'selected'
+          ? cards.filter((card) => selectedCardIds.includes(card.id))
         : cards
 
     setExportError('')
@@ -570,6 +802,8 @@ function App() {
       setExportError(
         exportMode === 'new'
           ? 'Keine neuen Karten zum Exportieren.'
+          : exportMode === 'selected'
+            ? 'Please select at least one card to export.'
           : 'Keine Karten zum Exportieren.',
       )
       return
@@ -583,6 +817,8 @@ function App() {
       'Explanation',
       'Source',
       'Tags',
+      'LanguageStyle',
+      'Quality',
     ]
     const csvRows = cardsToExport.map((card) =>
       [
@@ -593,6 +829,8 @@ function App() {
         card.explanation || '',
         card.source || 'Kindle',
         card.tags || '',
+        card.languageStyle || '',
+        card.quality || 'good',
       ]
         .map(escapeCsvValue)
         .join(','),
@@ -627,6 +865,15 @@ function App() {
     )
   }
 
+  function toggleSelectedCard(cardId: string) {
+    setSelectedCardIds((currentIds) =>
+      currentIds.includes(cardId)
+        ? currentIds.filter((currentId) => currentId !== cardId)
+        : [...currentIds, cardId],
+    )
+    setExportError('')
+  }
+
   function deleteCard(cardId: string) {
     const shouldDelete = window.confirm('Delete this card?')
 
@@ -644,6 +891,9 @@ function App() {
     setEditingCardId('')
     setEditDraft(null)
     setSavedCardsError('')
+    setSelectedCardIds((currentIds) =>
+      currentIds.filter((currentId) => currentId !== cardId),
+    )
     setCards((currentCards) => currentCards.filter((card) => card.id !== cardId))
   }
 
@@ -722,6 +972,8 @@ function App() {
               explanation: editDraft.explanation?.trim() || '',
               source: editDraft.source?.trim() || editDraft.source,
               tags: normalizeTags(editDraft.tags || ''),
+              languageStyle: editDraft.languageStyle?.trim() || '',
+              quality: editDraft.quality || 'good',
             }
           : card,
       ),
@@ -790,6 +1042,7 @@ function App() {
 
       const importedCards = parsedBackup.cards.map((card: SavedCard) => ({
         ...card,
+        quality: card.quality || 'good',
         exportedAt: card.exportedAt ?? null,
       }))
 
@@ -811,6 +1064,11 @@ function App() {
           <p className="app-kicker">Kindle overlay</p>
           <h1>Send to Anki</h1>
         </header>
+        {offlineWarning ? (
+          <p className="backup-reminder" role="status">
+            {offlineWarning}
+          </p>
+        ) : null}
 
         <section className="sentence-card" aria-label="Sentence">
           <label className="input-label" htmlFor="sentence-input">
@@ -886,6 +1144,31 @@ function App() {
               )
             })}
           </div>
+          <button
+            className="export-button"
+            type="button"
+            onClick={suggestPhrases}
+            disabled={isSuggestingPhrases || isGenerating}
+          >
+            {isSuggestingPhrases ? 'Suggesting...' : 'Suggest phrases'}
+          </button>
+          {phraseSuggestions.length > 0 ? (
+            <div className="suggestion-list" aria-label="Suggested phrases">
+              {phraseSuggestions.map((phrase) => (
+                <button
+                  className={`suggestion-chip${
+                    selectedWords.includes(phrase) ? ' selected' : ''
+                  }`}
+                  key={phrase}
+                  type="button"
+                  onClick={() => addSuggestedPhrase(phrase)}
+                  disabled={isGenerating}
+                >
+                  {phrase}
+                </button>
+              ))}
+            </div>
+          ) : null}
         </section>
 
         <section className="selected-panel" aria-label="Selected word">
@@ -895,6 +1178,24 @@ function App() {
               ? selectedWords.join(', ')
               : 'Noch kein Wort ausgew\u00e4hlt'}
           </p>
+          {selectedWords.length > 0 ? (
+            <div className="audio-button-row">
+              <button
+                className="audio-button"
+                type="button"
+                onClick={() => speakText(selectedWords.join(', '))}
+              >
+                🔊 Word
+              </button>
+              <button
+                className="audio-button"
+                type="button"
+                onClick={() => speakText(sentence)}
+              >
+                🔊 Sentence
+              </button>
+            </div>
+          ) : null}
           {selectedWords.length > 0 ? (
             <button
               className="generate-button"
@@ -924,6 +1225,11 @@ function App() {
               {translationError}
             </p>
           ) : null}
+          {speechError ? (
+            <p className="error-message" role="alert">
+              {speechError}
+            </p>
+          ) : null}
         </section>
 
         <section className="result-panel" aria-label="Translation result">
@@ -944,6 +1250,11 @@ function App() {
                     <p className="result-explanation">
                       {translation.explanation}
                     </p>
+                    {translation.languageStyle ? (
+                      <p className="result-style">
+                        Style: {translation.languageStyle}
+                      </p>
+                    ) : null}
                   </div>
                 )
               })}
@@ -973,6 +1284,21 @@ function App() {
               placeholder="optional, e.g. fiction verbs"
             />
           </label>
+          <label className="metadata-label" htmlFor="quality-input">
+            Quality
+            <select
+              id="quality-input"
+              value={sessionQuality}
+              onChange={(event) =>
+                setSessionQuality(event.target.value as CardQuality)
+              }
+            >
+              <option value="good">good</option>
+              <option value="needs edit">needs edit</option>
+              <option value="hard">hard</option>
+              <option value="important">important</option>
+            </select>
+          </label>
           <button
             className="save-button"
             type="button"
@@ -1000,20 +1326,32 @@ function App() {
           </button>
           {isCardsExpanded ? (
             <>
-              <button
-                className="export-button"
-                type="button"
-                onClick={() => exportCardsAsCsv('new')}
-              >
-                Neue Karten als CSV exportieren
-              </button>
-              <button
-                className="export-button"
-                type="button"
-                onClick={() => exportCardsAsCsv('all')}
-              >
-                Alle Karten als CSV exportieren
-              </button>
+              {selectedCardIds.length === 0 ? (
+                <>
+                  <button
+                    className="export-button"
+                    type="button"
+                    onClick={() => exportCardsAsCsv('new')}
+                  >
+                    Neue Karten als CSV exportieren
+                  </button>
+                  <button
+                    className="export-button"
+                    type="button"
+                    onClick={() => exportCardsAsCsv('all')}
+                  >
+                    Alle Karten als CSV exportieren
+                  </button>
+                </>
+              ) : (
+                <button
+                  className="export-button"
+                  type="button"
+                  onClick={() => exportCardsAsCsv('selected')}
+                >
+                  Selected cards als CSV exportieren ({selectedCardIds.length})
+                </button>
+              )}
               <button
                 className="export-button"
                 type="button"
@@ -1098,6 +1436,11 @@ function App() {
                   {savedCardsError}
                 </p>
               ) : null}
+              {speechError ? (
+                <p className="error-message" role="alert">
+                  {speechError}
+                </p>
+              ) : null}
               {lastDeletedCard ? (
                 <div className="undo-delete">
                   <p>Deleted "{lastDeletedCard.targetWord}".</p>
@@ -1173,6 +1516,32 @@ function App() {
                               }
                             />
                           </label>
+                          <label>
+                            Language style
+                            <input
+                              value={editDraft.languageStyle || ''}
+                              onChange={(event) =>
+                                updateEditDraft(
+                                  'languageStyle',
+                                  event.target.value,
+                                )
+                              }
+                            />
+                          </label>
+                          <label>
+                            Quality
+                            <select
+                              value={editDraft.quality || 'good'}
+                              onChange={(event) =>
+                                updateEditDraft('quality', event.target.value)
+                              }
+                            >
+                              <option value="good">good</option>
+                              <option value="needs edit">needs edit</option>
+                              <option value="hard">hard</option>
+                              <option value="important">important</option>
+                            </select>
+                          </label>
                           <div className="card-action-row">
                             <button
                               className="save-edit-button"
@@ -1192,6 +1561,14 @@ function App() {
                         </div>
                       ) : (
                         <>
+                          <label className="card-select-label">
+                            <input
+                              type="checkbox"
+                              checked={selectedCardIds.includes(card.id)}
+                              onChange={() => toggleSelectedCard(card.id)}
+                            />
+                            Select for export
+                          </label>
                           <div className="card-title-row">
                             <p className="card-word">
                               {highlightSearchText(card.targetWord, cardSearch)}
@@ -1230,9 +1607,37 @@ function App() {
                               {highlightSearchText(card.tags, cardSearch)}
                             </p>
                           ) : null}
+                          {card.languageStyle ? (
+                            <p className="card-tags">
+                              Style:{' '}
+                              {highlightSearchText(
+                                card.languageStyle,
+                                cardSearch,
+                              )}
+                            </p>
+                          ) : null}
+                          <p className="card-quality">
+                            Quality: {card.quality || 'good'}
+                          </p>
                           <time className="card-date" dateTime={card.createdAt}>
                             {new Date(card.createdAt).toLocaleString()}
                           </time>
+                          <div className="audio-button-row">
+                            <button
+                              className="audio-button"
+                              type="button"
+                              onClick={() => speakText(card.targetWord)}
+                            >
+                              🔊 Word
+                            </button>
+                            <button
+                              className="audio-button"
+                              type="button"
+                              onClick={() => speakText(card.sentence)}
+                            >
+                              🔊 Sentence
+                            </button>
+                          </div>
                           <div className="card-action-row">
                             <button
                               className="edit-card-button"
