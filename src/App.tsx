@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useRef, useEffect, useState } from 'react'
 import './App.css'
 
 const initialSentence = 'This is an example sentence.'
@@ -17,6 +17,19 @@ type SavedCard = {
 type TranslationResult = {
   meaning: string
   explanation: string
+}
+
+type BackupData = {
+  app: string
+  version: number
+  createdAt: string
+  cards: SavedCard[]
+  duplicateDetection: {
+    normalizedPairs: Array<{
+      sentence: string
+      targetWord: string
+    }>
+  }
 }
 
 function normalizeValue(value: string) {
@@ -56,7 +69,23 @@ function splitTextIntoSentences(text: string) {
     .filter(Boolean)
 }
 
+function isValidBackupCard(card: unknown): card is SavedCard {
+  if (!card || typeof card !== 'object') {
+    return false
+  }
+
+  const possibleCard = card as SavedCard
+
+  return (
+    typeof possibleCard.id === 'string' &&
+    typeof possibleCard.sentence === 'string' &&
+    typeof possibleCard.targetWord === 'string' &&
+    typeof possibleCard.createdAt === 'string'
+  )
+}
+
 function App() {
+  const backupInputRef = useRef<HTMLInputElement>(null)
   const [sentence, setSentence] = useState(initialSentence)
   const [sentences, setSentences] = useState<string[]>([])
   const [currentSentenceIndex, setCurrentSentenceIndex] = useState(0)
@@ -64,6 +93,7 @@ function App() {
   const [clipboardError, setClipboardError] = useState('')
   const [cardError, setCardError] = useState('')
   const [exportError, setExportError] = useState('')
+  const [backupError, setBackupError] = useState('')
   const [translationError, setTranslationError] = useState('')
   const [isGenerating, setIsGenerating] = useState(false)
   const [translations, setTranslations] = useState<
@@ -116,6 +146,7 @@ function App() {
     setClipboardError('')
     setCardError('')
     setExportError('')
+    setBackupError('')
     setTranslationError('')
     setTranslations({})
   }
@@ -150,6 +181,7 @@ function App() {
     )
     setCardError('')
     setExportError('')
+    setBackupError('')
     setTranslationError('')
     setTranslations({})
   }
@@ -362,6 +394,75 @@ function App() {
     )
   }
 
+  function exportBackup() {
+    const today = new Date().toISOString().slice(0, 10)
+    const backupData: BackupData = {
+      app: 'kindle-to-anki',
+      version: 1,
+      createdAt: new Date().toISOString(),
+      cards,
+      duplicateDetection: {
+        normalizedPairs: cards.map((card) => ({
+          sentence: normalizeValue(card.sentence),
+          targetWord: normalizeValue(card.targetWord),
+        })),
+      },
+    }
+    const blob = new Blob([JSON.stringify(backupData, null, 2)], {
+      type: 'application/json;charset=utf-8',
+    })
+    const downloadUrl = URL.createObjectURL(blob)
+    const downloadLink = document.createElement('a')
+
+    downloadLink.href = downloadUrl
+    downloadLink.download = `kindle-to-anki-backup-${today}.json`
+    document.body.appendChild(downloadLink)
+    downloadLink.click()
+    downloadLink.remove()
+    URL.revokeObjectURL(downloadUrl)
+    setBackupError('')
+  }
+
+  function openBackupImport() {
+    backupInputRef.current?.click()
+  }
+
+  async function importBackup(event: React.ChangeEvent<HTMLInputElement>) {
+    const backupFile = event.target.files?.[0]
+
+    if (!backupFile) {
+      return
+    }
+
+    try {
+      const backupText = await backupFile.text()
+      const parsedBackup = JSON.parse(backupText)
+
+      if (
+        !parsedBackup ||
+        typeof parsedBackup !== 'object' ||
+        !Array.isArray(parsedBackup.cards) ||
+        !parsedBackup.cards.every(isValidBackupCard)
+      ) {
+        throw new Error('Invalid backup')
+      }
+
+      const importedCards = parsedBackup.cards.map((card: SavedCard) => ({
+        ...card,
+        exportedAt: card.exportedAt ?? null,
+      }))
+
+      setCards(importedCards)
+      localStorage.setItem(cardsStorageKey, JSON.stringify(importedCards))
+      setCardsLoaded(true)
+      setBackupError('')
+    } catch {
+      setBackupError('Backup konnte nicht importiert werden. Bitte w\u00e4hle eine g\u00fcltige JSON-Datei.')
+    } finally {
+      event.target.value = ''
+    }
+  }
+
   return (
     <main className="app-shell">
       <section className="overlay-panel" aria-label="Send to Anki word picker">
@@ -516,9 +617,31 @@ function App() {
           >
             Neue Karten als CSV exportieren
           </button>
+          <button className="export-button" type="button" onClick={exportBackup}>
+            Export Backup
+          </button>
+          <button
+            className="export-button"
+            type="button"
+            onClick={openBackupImport}
+          >
+            Import Backup
+          </button>
+          <input
+            ref={backupInputRef}
+            className="backup-input"
+            type="file"
+            accept="application/json,.json"
+            onChange={importBackup}
+          />
           {exportError ? (
             <p className="error-message" role="alert">
               {exportError}
+            </p>
+          ) : null}
+          {backupError ? (
+            <p className="error-message" role="alert">
+              {backupError}
             </p>
           ) : null}
           {cards.length > 0 ? (

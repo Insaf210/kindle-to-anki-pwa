@@ -216,6 +216,10 @@
   outline-offset: 2px;
 }
 
+.backup-input {
+  display: none;
+}
+
 .error-message {
   margin: 10px 2px 0;
   color: #b42318;
