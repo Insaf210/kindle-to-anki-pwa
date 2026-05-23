@@ -3,7 +3,7 @@
   display: flex;
   align-items: flex-start;
   justify-content: center;
-  padding: 18px;
+  padding: 14px 14px calc(28px + env(safe-area-inset-bottom));
   background:
     radial-gradient(circle at top left, rgba(91, 141, 239, 0.18), transparent 32%),
     linear-gradient(180deg, #f7f8fb 0%, #eef1f6 100%);
@@ -11,16 +11,17 @@
 
 .overlay-panel {
   width: min(100%, 430px);
-  min-height: calc(100svh - 36px);
+  min-height: calc(100svh - 28px - env(safe-area-inset-bottom));
   display: flex;
   flex-direction: column;
-  gap: 18px;
-  padding: 20px;
-  border: 1px solid rgba(21, 32, 51, 0.08);
-  border-radius: 28px;
-  background: rgba(255, 255, 255, 0.88);
-  box-shadow: 0 20px 60px rgba(29, 45, 68, 0.16);
-  backdrop-filter: blur(18px);
+  gap: 14px;
+  padding: 18px;
+  padding-bottom: calc(22px + env(safe-area-inset-bottom));
+  border: 1px solid rgba(21, 32, 51, 0.06);
+  border-radius: 24px;
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: 0 16px 42px rgba(29, 45, 68, 0.12);
+  backdrop-filter: blur(14px);
 }
 
 .app-header {
@@ -47,13 +48,13 @@
 .sentence-card,
 .selected-panel {
   border: 1px solid rgba(21, 32, 51, 0.08);
-  border-radius: 22px;
+  border-radius: 18px;
   background: #ffffff;
-  box-shadow: 0 10px 30px rgba(29, 45, 68, 0.08);
+  box-shadow: 0 8px 20px rgba(29, 45, 68, 0.06);
 }
 
 .sentence-card {
-  padding: 18px;
+  padding: 16px;
 }
 
 .input-label {
@@ -68,12 +69,12 @@
 
 .sentence-input {
   width: 100%;
-  min-height: 136px;
+  min-height: 128px;
   display: block;
   resize: vertical;
   padding: 14px;
   border: 1px solid #d9e0ea;
-  border-radius: 16px;
+  border-radius: 14px;
   color: #1f2937;
   background: #f8fafc;
   font: inherit;
@@ -97,18 +98,18 @@
 
 .clipboard-button {
   width: 100%;
-  min-height: 46px;
-  margin: 12px 0 0;
+  min-height: 50px;
+  margin: 14px 0 0;
   padding: 0 16px;
   border: 0;
-  border-radius: 15px;
+  border-radius: 14px;
   color: #ffffff;
   background: #111827;
   font: inherit;
   font-size: 0.95rem;
   font-weight: 800;
   cursor: pointer;
-  box-shadow: 0 12px 24px rgba(17, 24, 39, 0.16);
+  box-shadow: 0 8px 18px rgba(17, 24, 39, 0.14);
   transition:
     transform 160ms ease,
     background 160ms ease,
@@ -126,18 +127,18 @@
 
 .save-button {
   width: 100%;
-  min-height: 46px;
+  min-height: 50px;
   margin: 14px 0 0;
   padding: 0 16px;
   border: 0;
-  border-radius: 15px;
+  border-radius: 14px;
   color: #ffffff;
   background: #2563eb;
   font: inherit;
   font-size: 0.95rem;
   font-weight: 800;
   cursor: pointer;
-  box-shadow: 0 12px 24px rgba(37, 99, 235, 0.2);
+  box-shadow: 0 8px 18px rgba(37, 99, 235, 0.18);
   transition:
     transform 160ms ease,
     background 160ms ease,
@@ -155,18 +156,18 @@
 
 .generate-button {
   width: 100%;
-  min-height: 46px;
+  min-height: 50px;
   margin: 14px 0 0;
   padding: 0 16px;
   border: 0;
-  border-radius: 15px;
+  border-radius: 14px;
   color: #ffffff;
   background: #0f766e;
   font: inherit;
   font-size: 0.95rem;
   font-weight: 800;
   cursor: pointer;
-  box-shadow: 0 12px 24px rgba(15, 118, 110, 0.18);
+  box-shadow: 0 8px 18px rgba(15, 118, 110, 0.16);
   transition:
     transform 160ms ease,
     background 160ms ease,
@@ -190,11 +191,11 @@
 
 .export-button {
   width: 100%;
-  min-height: 46px;
+  min-height: 50px;
   margin: 12px 0 0;
   padding: 0 16px;
   border: 1px solid rgba(37, 99, 235, 0.18);
-  border-radius: 15px;
+  border-radius: 14px;
   color: #1d4ed8;
   background: rgba(37, 99, 235, 0.08);
   font: inherit;
@@ -231,8 +232,8 @@
 .word-list {
   display: flex;
   flex-wrap: wrap;
-  gap: 10px;
-  margin-top: 18px;
+  gap: 12px;
+  margin-top: 20px;
 }
 
 .word-list:empty {
@@ -240,8 +241,8 @@
 }
 
 .word-chip {
-  min-height: 42px;
-  padding: 0 15px;
+  min-height: 48px;
+  padding: 0 18px;
   border: 1px solid #d9e0ea;
   border-radius: 999px;
   color: #253044;
@@ -271,27 +272,27 @@
   border-color: #2563eb;
   color: #ffffff;
   background: #2563eb;
-  box-shadow: 0 10px 22px rgba(37, 99, 235, 0.28);
+  box-shadow: 0 8px 18px rgba(37, 99, 235, 0.24);
 }
 
 .selected-panel {
-  padding: 16px 18px;
+  padding: 16px;
 }
 
 .cards-panel {
-  padding: 16px 18px;
+  padding: 16px;
   border: 1px solid rgba(21, 32, 51, 0.08);
-  border-radius: 22px;
+  border-radius: 18px;
   background: #ffffff;
-  box-shadow: 0 10px 30px rgba(29, 45, 68, 0.08);
+  box-shadow: 0 8px 20px rgba(29, 45, 68, 0.06);
 }
 
 .result-panel {
-  padding: 16px 18px;
+  padding: 16px;
   border: 1px solid rgba(21, 32, 51, 0.08);
-  border-radius: 22px;
+  border-radius: 18px;
   background: #ffffff;
-  box-shadow: 0 10px 30px rgba(29, 45, 68, 0.08);
+  box-shadow: 0 8px 20px rgba(29, 45, 68, 0.06);
 }
 
 .result-content {
@@ -337,7 +338,7 @@
 
 .card-list {
   display: grid;
-  gap: 10px;
+  gap: 12px;
   padding: 0;
   margin: 12px 0 0;
   list-style: none;
@@ -346,7 +347,7 @@
 .saved-card {
   padding: 14px;
   border: 1px solid #e6ebf2;
-  border-radius: 16px;
+  border-radius: 14px;
   background: #f8fafc;
 }
 
@@ -436,6 +437,18 @@
   font-size: 1.25rem;
   line-height: 1.35;
   font-weight: 800;
+}
+
+@media (max-width: 430px) {
+  .app-shell {
+    padding-inline: 10px;
+    padding-top: 10px;
+  }
+
+  .overlay-panel {
+    border-radius: 22px;
+    padding-inline: 14px;
+  }
 }
 
 @media (min-width: 700px) {
