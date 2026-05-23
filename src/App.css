@@ -221,6 +221,57 @@
   display: none;
 }
 
+.card-search-input {
+  width: 100%;
+  min-height: 46px;
+  margin-top: 12px;
+  padding: 0 14px;
+  border: 1px solid #d9e0ea;
+  border-radius: 14px;
+  color: #1f2937;
+  background: #f8fafc;
+  font: inherit;
+  font-size: 0.95rem;
+}
+
+.card-search-input:focus {
+  border-color: #2563eb;
+  outline: none;
+  box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.12);
+}
+
+.card-filter-group {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.card-search-mode {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.card-filter-button {
+  min-height: 40px;
+  border: 1px solid #d9e0ea;
+  border-radius: 12px;
+  color: #475467;
+  background: #ffffff;
+  font: inherit;
+  font-size: 0.84rem;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.card-filter-button.active {
+  border-color: #2563eb;
+  color: #1d4ed8;
+  background: rgba(37, 99, 235, 0.08);
+}
+
 .error-message {
   margin: 10px 2px 0;
   color: #b42318;
@@ -277,6 +328,39 @@
 
 .selected-panel {
   padding: 16px;
+}
+
+.metadata-label {
+  display: grid;
+  gap: 7px;
+  margin-top: 12px;
+  color: #667085;
+  font-size: 0.78rem;
+  line-height: 1.2;
+  font-weight: 850;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.metadata-label input {
+  width: 100%;
+  min-height: 44px;
+  padding: 0 13px;
+  border: 1px solid #d9e0ea;
+  border-radius: 12px;
+  color: #1f2937;
+  background: #f8fafc;
+  font: inherit;
+  font-size: 0.94rem;
+  line-height: 1.4;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.metadata-label input:focus {
+  border-color: #2563eb;
+  outline: none;
+  box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.12);
 }
 
 .cards-panel {
@@ -380,6 +464,48 @@
   background: #f8fafc;
 }
 
+.edit-card-form {
+  display: grid;
+  gap: 12px;
+}
+
+.edit-card-form label {
+  display: grid;
+  gap: 6px;
+  color: #667085;
+  font-size: 0.78rem;
+  line-height: 1.2;
+  font-weight: 850;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.edit-card-form input,
+.edit-card-form textarea {
+  width: 100%;
+  padding: 11px 12px;
+  border: 1px solid #d9e0ea;
+  border-radius: 12px;
+  color: #1f2937;
+  background: #ffffff;
+  font: inherit;
+  font-size: 0.94rem;
+  line-height: 1.4;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.edit-card-form textarea {
+  resize: vertical;
+}
+
+.edit-card-form input:focus,
+.edit-card-form textarea:focus {
+  border-color: #2563eb;
+  outline: none;
+  box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.12);
+}
+
 .card-title-row {
   display: flex;
   align-items: flex-start;
@@ -434,6 +560,42 @@
   line-height: 1.4;
 }
 
+.card-source {
+  margin: 8px 0 0;
+  color: #858f9f;
+  font-size: 0.82rem;
+  line-height: 1.35;
+  font-weight: 700;
+}
+
+.card-tags {
+  margin: 8px 0 0;
+  color: #475467;
+  font-size: 0.82rem;
+  line-height: 1.35;
+  font-weight: 800;
+}
+
+.backup-reminder {
+  margin: 12px 0 0;
+  padding: 11px 12px;
+  border: 1px solid rgba(217, 119, 6, 0.18);
+  border-radius: 14px;
+  color: #92400e;
+  background: rgba(251, 191, 36, 0.12);
+  font-size: 0.9rem;
+  line-height: 1.35;
+  font-weight: 750;
+}
+
+.search-highlight {
+  border-radius: 5px;
+  color: inherit;
+  background: #fef08a;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+
 .card-date {
   display: block;
   margin-top: 10px;
@@ -443,9 +605,34 @@
   font-weight: 700;
 }
 
+.card-action-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.edit-card-button,
+.save-edit-button {
+  min-height: 38px;
+  padding: 0 14px;
+  border: 1px solid rgba(37, 99, 235, 0.18);
+  border-radius: 12px;
+  color: #1d4ed8;
+  background: rgba(37, 99, 235, 0.08);
+  font: inherit;
+  font-size: 0.84rem;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.save-edit-button {
+  color: #ffffff;
+  background: #2563eb;
+}
+
 .delete-card-button {
   min-height: 38px;
-  margin-top: 12px;
   padding: 0 14px;
   border: 1px solid rgba(180, 35, 24, 0.18);
   border-radius: 12px;
@@ -464,6 +651,35 @@
 .delete-card-button:focus-visible {
   outline: 3px solid rgba(180, 35, 24, 0.16);
   outline-offset: 2px;
+}
+
+.undo-delete {
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid rgba(15, 118, 110, 0.14);
+  border-radius: 14px;
+  background: rgba(15, 118, 110, 0.06);
+}
+
+.undo-delete p {
+  margin: 0 0 10px;
+  color: #334155;
+  font-size: 0.9rem;
+  line-height: 1.35;
+  font-weight: 700;
+}
+
+.undo-delete button {
+  min-height: 38px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 12px;
+  color: #ffffff;
+  background: #0f766e;
+  font: inherit;
+  font-size: 0.84rem;
+  font-weight: 800;
+  cursor: pointer;
 }
 
 .empty-state {

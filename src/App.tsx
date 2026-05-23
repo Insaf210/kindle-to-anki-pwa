@@ -3,6 +3,9 @@ import './App.css'
 
 const initialSentence = 'This is an example sentence.'
 const cardsStorageKey = 'send-to-anki-cards'
+const lastBackupStorageKey = 'send-to-anki-last-backup-at'
+const backupReminderCardCount = 50
+const recentBackupDays = 30
 
 type SavedCard = {
   id: string
@@ -11,6 +14,8 @@ type SavedCard = {
   createdAt: string
   meaning?: string
   explanation?: string
+  source?: string
+  tags?: string
   exportedAt?: string | null
 }
 
@@ -18,6 +23,10 @@ type TranslationResult = {
   meaning: string
   explanation: string
 }
+
+type CardStatusFilter = 'all' | 'new' | 'exported'
+type CardSearchMode = 'target' | 'everywhere'
+type CsvExportMode = 'new' | 'all'
 
 type BackupData = {
   app: string
@@ -40,6 +49,10 @@ function getTranslationKey(targetWord: string) {
   return normalizeValue(targetWord)
 }
 
+function normalizeTags(value: string) {
+  return value.trim().replace(/[,\s]+/g, ' ')
+}
+
 function escapeCsvValue(value: string | number | null | undefined) {
   const textValue = String(value ?? '')
 
@@ -48,6 +61,41 @@ function escapeCsvValue(value: string | number | null | undefined) {
 
 function highlightTargetWord(sentence: string, targetWord: string) {
   return sentence.replace(targetWord, (match) => `<b>${match}</b>`)
+}
+
+function highlightSearchText(value: string, searchText: string) {
+  const cleanedSearch = searchText.trim()
+
+  if (!cleanedSearch) {
+    return value
+  }
+
+  const lowerValue = value.toLowerCase()
+  const lowerSearch = cleanedSearch.toLowerCase()
+  const parts = []
+  let currentIndex = 0
+  let matchIndex = lowerValue.indexOf(lowerSearch)
+
+  while (matchIndex !== -1) {
+    if (matchIndex > currentIndex) {
+      parts.push(value.slice(currentIndex, matchIndex))
+    }
+
+    parts.push(
+      <mark className="search-highlight" key={`${matchIndex}-${parts.length}`}>
+        {value.slice(matchIndex, matchIndex + cleanedSearch.length)}
+      </mark>,
+    )
+
+    currentIndex = matchIndex + cleanedSearch.length
+    matchIndex = lowerValue.indexOf(lowerSearch, currentIndex)
+  }
+
+  if (currentIndex < value.length) {
+    parts.push(value.slice(currentIndex))
+  }
+
+  return parts
 }
 
 function splitTextIntoSentences(text: string) {
@@ -88,6 +136,8 @@ function App() {
   const backupInputRef = useRef<HTMLInputElement>(null)
   const lastClipboardPromptRef = useRef('')
   const [sentence, setSentence] = useState(initialSentence)
+  const [sessionSource, setSessionSource] = useState('Kindle')
+  const [sessionTags, setSessionTags] = useState('')
   const [sentences, setSentences] = useState<string[]>([])
   const [currentSentenceIndex, setCurrentSentenceIndex] = useState(0)
   const [selectedWords, setSelectedWords] = useState<string[]>([])
@@ -103,13 +153,74 @@ function App() {
   const [cards, setCards] = useState<SavedCard[]>([])
   const [cardsLoaded, setCardsLoaded] = useState(false)
   const [isCardsExpanded, setIsCardsExpanded] = useState(false)
+  const [cardSearch, setCardSearch] = useState('')
+  const [cardSearchMode, setCardSearchMode] =
+    useState<CardSearchMode>('target')
+  const [cardStatusFilter, setCardStatusFilter] =
+    useState<CardStatusFilter>('all')
+  const [editingCardId, setEditingCardId] = useState('')
+  const [editDraft, setEditDraft] = useState<SavedCard | null>(null)
+  const [lastDeletedCard, setLastDeletedCard] = useState<SavedCard | null>(null)
+  const [lastBackupExportAt, setLastBackupExportAt] = useState('')
+  const [savedCardsError, setSavedCardsError] = useState('')
 
   const words = sentence.trim().split(/\s+/).filter(Boolean)
   const isMultiSentenceFlow = sentences.length > 1
   const hasNextSentence = currentSentenceIndex < sentences.length - 1
+  const normalizedCardSearch = normalizeValue(cardSearch)
+  const filteredCards = cards
+    .filter((card) => {
+      const searchableValues =
+        cardSearchMode === 'target'
+          ? [card.targetWord]
+          : [
+              card.sentence,
+              card.targetWord,
+              card.meaning || '',
+              card.explanation || '',
+              card.source || '',
+              card.tags || '',
+            ]
+      const matchesSearch =
+        !normalizedCardSearch ||
+        searchableValues.some((value) =>
+          normalizeValue(value).includes(normalizedCardSearch),
+        )
+      const matchesStatus =
+        cardStatusFilter === 'all' ||
+        (cardStatusFilter === 'new' && !card.exportedAt) ||
+        (cardStatusFilter === 'exported' && Boolean(card.exportedAt))
+
+      return matchesSearch && matchesStatus
+    })
+    .sort((firstCard, secondCard) => {
+      if (!normalizedCardSearch) {
+        return 0
+      }
+
+      const firstTargetMatches = normalizeValue(firstCard.targetWord).includes(
+        normalizedCardSearch,
+      )
+      const secondTargetMatches = normalizeValue(secondCard.targetWord).includes(
+        normalizedCardSearch,
+      )
+
+      return Number(secondTargetMatches) - Number(firstTargetMatches)
+    })
+  const backupIsRecent =
+    Boolean(lastBackupExportAt) &&
+    Date.now() - new Date(lastBackupExportAt).getTime() <
+      recentBackupDays * 24 * 60 * 60 * 1000
+  const shouldShowBackupReminder =
+    cards.length >= backupReminderCardCount && !backupIsRecent
 
   useEffect(() => {
     const savedCards = localStorage.getItem(cardsStorageKey)
+    const savedLastBackupExportAt = localStorage.getItem(lastBackupStorageKey)
+
+    if (savedLastBackupExportAt) {
+      setLastBackupExportAt(savedLastBackupExportAt)
+    }
 
     if (!savedCards) {
       setCardsLoaded(true)
@@ -408,13 +519,37 @@ function App() {
       return
     }
 
+    const existingTargetWord = cleanedTargetWords.find((targetWord) => {
+      const normalizedTargetWord = normalizeValue(targetWord)
+
+      return cards.some(
+        (card) =>
+          normalizeValue(card.targetWord) === normalizedTargetWord &&
+          normalizeValue(card.sentence) !== normalizedSentence,
+      )
+    })
+
+    if (existingTargetWord) {
+      const shouldSave = window.confirm(
+        `The target word '${existingTargetWord}' already exists in another card. Add it anyway?`,
+      )
+
+      if (!shouldSave) {
+        return
+      }
+    }
+
     const createdAt = new Date().toISOString()
+    const cleanedSource = sessionSource.trim() || 'Kindle'
+    const cleanedTags = normalizeTags(sessionTags)
     const newCards: SavedCard[] = cleanedTargetWords.map((targetWord, index) => ({
       id: `${Date.now()}-${index}`,
       sentence: cleanedSentence,
       targetWord,
       meaning: translations[getTranslationKey(targetWord)].meaning,
       explanation: translations[getTranslationKey(targetWord)].explanation,
+      source: cleanedSource,
+      tags: cleanedTags,
       createdAt,
       exportedAt: null,
     }))
@@ -423,13 +558,20 @@ function App() {
     setCardError('')
   }
 
-  function exportNewCardsAsCsv() {
-    const newCards = cards.filter((card) => card.exportedAt === null)
+  function exportCardsAsCsv(exportMode: CsvExportMode) {
+    const cardsToExport =
+      exportMode === 'new'
+        ? cards.filter((card) => card.exportedAt === null)
+        : cards
 
     setExportError('')
 
-    if (newCards.length === 0) {
-      setExportError('Keine neuen Karten zum Exportieren.')
+    if (cardsToExport.length === 0) {
+      setExportError(
+        exportMode === 'new'
+          ? 'Keine neuen Karten zum Exportieren.'
+          : 'Keine Karten zum Exportieren.',
+      )
       return
     }
 
@@ -440,15 +582,17 @@ function App() {
       'Meaning',
       'Explanation',
       'Source',
+      'Tags',
     ]
-    const csvRows = newCards.map((card) =>
+    const csvRows = cardsToExport.map((card) =>
       [
         card.id,
         highlightTargetWord(card.sentence, card.targetWord),
         card.targetWord,
         card.meaning || '',
         card.explanation || '',
-        'Kindle',
+        card.source || 'Kindle',
+        card.tags || '',
       ]
         .map(escapeCsvValue)
         .join(','),
@@ -472,11 +616,13 @@ function App() {
     URL.revokeObjectURL(downloadUrl)
 
     const exportedAt = new Date().toISOString()
-    const exportedIds = new Set(newCards.map((card) => card.id))
+    const exportedIds = new Set(cardsToExport.map((card) => card.id))
 
     setCards((currentCards) =>
       currentCards.map((card) =>
-        exportedIds.has(card.id) ? { ...card, exportedAt } : card,
+        exportedIds.has(card.id) && !card.exportedAt
+          ? { ...card, exportedAt }
+          : card,
       ),
     )
   }
@@ -488,9 +634,101 @@ function App() {
       return
     }
 
-    setCards((currentCards) =>
-      currentCards.filter((card) => card.id !== cardId),
+    const cardToDelete = cards.find((card) => card.id === cardId)
+
+    if (!cardToDelete) {
+      return
+    }
+
+    setLastDeletedCard(cardToDelete)
+    setEditingCardId('')
+    setEditDraft(null)
+    setSavedCardsError('')
+    setCards((currentCards) => currentCards.filter((card) => card.id !== cardId))
+  }
+
+  function undoLastDelete() {
+    if (!lastDeletedCard) {
+      return
+    }
+
+    setCards((currentCards) => [lastDeletedCard, ...currentCards])
+    setLastDeletedCard(null)
+    setSavedCardsError('')
+  }
+
+  function startEditingCard(card: SavedCard) {
+    setEditingCardId(card.id)
+    setEditDraft({ ...card })
+    setSavedCardsError('')
+  }
+
+  function cancelEditingCard() {
+    setEditingCardId('')
+    setEditDraft(null)
+    setSavedCardsError('')
+  }
+
+  function updateEditDraft(field: keyof SavedCard, value: string) {
+    setEditDraft((currentDraft) => {
+      if (!currentDraft) {
+        return currentDraft
+      }
+
+      return {
+        ...currentDraft,
+        [field]: value,
+      }
+    })
+  }
+
+  function saveEditedCard() {
+    if (!editDraft) {
+      return
+    }
+
+    const cleanedSentence = editDraft.sentence.trim()
+    const cleanedTargetWord = editDraft.targetWord.trim()
+
+    if (!cleanedSentence || !cleanedTargetWord) {
+      setSavedCardsError('Sentence and target word cannot be empty.')
+      return
+    }
+
+    const normalizedSentence = normalizeValue(cleanedSentence)
+    const normalizedTargetWord = normalizeValue(cleanedTargetWord)
+    const duplicateCard = cards.find(
+      (card) =>
+        card.id !== editDraft.id &&
+        normalizeValue(card.sentence) === normalizedSentence &&
+        normalizeValue(card.targetWord) === normalizedTargetWord,
     )
+
+    if (duplicateCard) {
+      setSavedCardsError(
+        `You already saved '${cleanedTargetWord}' in this sentence.`,
+      )
+      return
+    }
+
+    setCards((currentCards) =>
+      currentCards.map((card) =>
+        card.id === editDraft.id
+          ? {
+              ...editDraft,
+              sentence: cleanedSentence,
+              targetWord: cleanedTargetWord,
+              meaning: editDraft.meaning?.trim() || '',
+              explanation: editDraft.explanation?.trim() || '',
+              source: editDraft.source?.trim() || editDraft.source,
+              tags: normalizeTags(editDraft.tags || ''),
+            }
+          : card,
+      ),
+    )
+    setEditingCardId('')
+    setEditDraft(null)
+    setSavedCardsError('')
   }
 
   function exportBackup() {
@@ -519,6 +757,10 @@ function App() {
     downloadLink.click()
     downloadLink.remove()
     URL.revokeObjectURL(downloadUrl)
+    const exportedAt = new Date().toISOString()
+
+    localStorage.setItem(lastBackupStorageKey, exportedAt)
+    setLastBackupExportAt(exportedAt)
     setBackupError('')
   }
 
@@ -713,6 +955,24 @@ function App() {
 
         <section className="selected-panel" aria-label="Save card">
           <p className="panel-label">Karte</p>
+          <label className="metadata-label" htmlFor="source-input">
+            Source / Book
+            <input
+              id="source-input"
+              value={sessionSource}
+              onChange={(event) => setSessionSource(event.target.value)}
+              placeholder="Kindle"
+            />
+          </label>
+          <label className="metadata-label" htmlFor="tags-input">
+            Tags
+            <input
+              id="tags-input"
+              value={sessionTags}
+              onChange={(event) => setSessionTags(event.target.value)}
+              placeholder="optional, e.g. fiction verbs"
+            />
+          </label>
           <button
             className="save-button"
             type="button"
@@ -743,9 +1003,16 @@ function App() {
               <button
                 className="export-button"
                 type="button"
-                onClick={exportNewCardsAsCsv}
+                onClick={() => exportCardsAsCsv('new')}
               >
                 Neue Karten als CSV exportieren
+              </button>
+              <button
+                className="export-button"
+                type="button"
+                onClick={() => exportCardsAsCsv('all')}
+              >
+                Alle Karten als CSV exportieren
               </button>
               <button
                 className="export-button"
@@ -768,6 +1035,54 @@ function App() {
                 accept="application/json,.json"
                 onChange={importBackup}
               />
+              {shouldShowBackupReminder ? (
+                <p className="backup-reminder">
+                  You have many saved cards. Consider exporting a backup.
+                </p>
+              ) : null}
+              <input
+                className="card-search-input"
+                type="search"
+                value={cardSearch}
+                onChange={(event) => setCardSearch(event.target.value)}
+                placeholder="Search saved cards"
+              />
+              <div className="card-search-mode" aria-label="Search mode">
+                {(['target', 'everywhere'] as CardSearchMode[]).map(
+                  (searchMode) => (
+                    <button
+                      className={`card-filter-button${
+                        cardSearchMode === searchMode ? ' active' : ''
+                      }`}
+                      key={searchMode}
+                      type="button"
+                      onClick={() => setCardSearchMode(searchMode)}
+                    >
+                      {searchMode === 'target' ? 'Target only' : 'Everywhere'}
+                    </button>
+                  ),
+                )}
+              </div>
+              <div className="card-filter-group" aria-label="Filter saved cards">
+                {(['all', 'new', 'exported'] as CardStatusFilter[]).map(
+                  (filterValue) => (
+                    <button
+                      className={`card-filter-button${
+                        cardStatusFilter === filterValue ? ' active' : ''
+                      }`}
+                      key={filterValue}
+                      type="button"
+                      onClick={() => setCardStatusFilter(filterValue)}
+                    >
+                      {filterValue === 'all'
+                        ? 'All'
+                        : filterValue === 'new'
+                          ? 'New'
+                          : 'Exported'}
+                    </button>
+                  ),
+                )}
+              </div>
               {exportError ? (
                 <p className="error-message" role="alert">
                   {exportError}
@@ -778,42 +1093,173 @@ function App() {
                   {backupError}
                 </p>
               ) : null}
-              {cards.length > 0 ? (
+              {savedCardsError ? (
+                <p className="error-message" role="alert">
+                  {savedCardsError}
+                </p>
+              ) : null}
+              {lastDeletedCard ? (
+                <div className="undo-delete">
+                  <p>Deleted "{lastDeletedCard.targetWord}".</p>
+                  <button type="button" onClick={undoLastDelete}>
+                    Undo delete
+                  </button>
+                </div>
+              ) : null}
+              {filteredCards.length > 0 ? (
                 <ul className="card-list">
-                  {cards.map((card) => (
+                  {filteredCards.map((card) => (
                     <li className="saved-card" key={card.id}>
-                      <div className="card-title-row">
-                        <p className="card-word">{card.targetWord}</p>
-                        <span
-                          className={`export-status${
-                            card.exportedAt ? ' exported' : ''
-                          }`}
-                        >
-                          {card.exportedAt ? 'Exportiert' : 'Neu'}
-                        </span>
-                      </div>
-                      {card.meaning ? (
-                        <p className="card-meaning">{card.meaning}</p>
-                      ) : null}
-                      <p className="card-sentence">{card.sentence}</p>
-                      {card.explanation ? (
-                        <p className="card-explanation">{card.explanation}</p>
-                      ) : null}
-                      <time className="card-date" dateTime={card.createdAt}>
-                        {new Date(card.createdAt).toLocaleString()}
-                      </time>
-                      <button
-                        className="delete-card-button"
-                        type="button"
-                        onClick={() => deleteCard(card.id)}
-                      >
-                        Delete
-                      </button>
+                      {editingCardId === card.id && editDraft ? (
+                        <div className="edit-card-form">
+                          <label>
+                            Sentence
+                            <textarea
+                              value={editDraft.sentence}
+                              onChange={(event) =>
+                                updateEditDraft('sentence', event.target.value)
+                              }
+                              rows={3}
+                            />
+                          </label>
+                          <label>
+                            Target word
+                            <input
+                              value={editDraft.targetWord}
+                              onChange={(event) =>
+                                updateEditDraft('targetWord', event.target.value)
+                              }
+                            />
+                          </label>
+                          <label>
+                            Meaning
+                            <input
+                              value={editDraft.meaning || ''}
+                              onChange={(event) =>
+                                updateEditDraft('meaning', event.target.value)
+                              }
+                            />
+                          </label>
+                          <label>
+                            Explanation
+                            <textarea
+                              value={editDraft.explanation || ''}
+                              onChange={(event) =>
+                                updateEditDraft(
+                                  'explanation',
+                                  event.target.value,
+                                )
+                              }
+                              rows={3}
+                            />
+                          </label>
+                          {editDraft.source !== undefined ? (
+                            <label>
+                              Source
+                              <input
+                                value={editDraft.source || ''}
+                                onChange={(event) =>
+                                  updateEditDraft('source', event.target.value)
+                                }
+                              />
+                            </label>
+                          ) : null}
+                          <label>
+                            Tags
+                            <input
+                              value={editDraft.tags || ''}
+                              onChange={(event) =>
+                                updateEditDraft('tags', event.target.value)
+                              }
+                            />
+                          </label>
+                          <div className="card-action-row">
+                            <button
+                              className="save-edit-button"
+                              type="button"
+                              onClick={saveEditedCard}
+                            >
+                              Save edits
+                            </button>
+                            <button
+                              className="delete-card-button"
+                              type="button"
+                              onClick={cancelEditingCard}
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <>
+                          <div className="card-title-row">
+                            <p className="card-word">
+                              {highlightSearchText(card.targetWord, cardSearch)}
+                            </p>
+                            <span
+                              className={`export-status${
+                                card.exportedAt ? ' exported' : ''
+                              }`}
+                            >
+                              {card.exportedAt ? 'Exportiert' : 'Neu'}
+                            </span>
+                          </div>
+                          {card.meaning ? (
+                            <p className="card-meaning">
+                              {highlightSearchText(card.meaning, cardSearch)}
+                            </p>
+                          ) : null}
+                          <p className="card-sentence">
+                            {highlightSearchText(card.sentence, cardSearch)}
+                          </p>
+                          {card.explanation ? (
+                            <p className="card-explanation">
+                              {highlightSearchText(
+                                card.explanation,
+                                cardSearch,
+                              )}
+                            </p>
+                          ) : null}
+                          {card.source ? (
+                            <p className="card-source">
+                              {highlightSearchText(card.source, cardSearch)}
+                            </p>
+                          ) : null}
+                          {card.tags ? (
+                            <p className="card-tags">
+                              {highlightSearchText(card.tags, cardSearch)}
+                            </p>
+                          ) : null}
+                          <time className="card-date" dateTime={card.createdAt}>
+                            {new Date(card.createdAt).toLocaleString()}
+                          </time>
+                          <div className="card-action-row">
+                            <button
+                              className="edit-card-button"
+                              type="button"
+                              onClick={() => startEditingCard(card)}
+                            >
+                              Edit
+                            </button>
+                            <button
+                              className="delete-card-button"
+                              type="button"
+                              onClick={() => deleteCard(card.id)}
+                            >
+                              Delete
+                            </button>
+                          </div>
+                        </>
+                      )}
                     </li>
                   ))}
                 </ul>
               ) : (
-                <p className="empty-state">Noch keine Karten gespeichert.</p>
+                <p className="empty-state">
+                  {cards.length > 0
+                    ? 'No saved cards match this search.'
+                    : 'Noch keine Karten gespeichert.'}
+                </p>
               )}
             </>
           ) : null}
