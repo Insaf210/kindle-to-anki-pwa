@@ -481,6 +481,18 @@ function App() {
     )
   }
 
+  function deleteCard(cardId: string) {
+    const shouldDelete = window.confirm('Delete this card?')
+
+    if (!shouldDelete) {
+      return
+    }
+
+    setCards((currentCards) =>
+      currentCards.filter((card) => card.id !== cardId),
+    )
+  }
+
   function exportBackup() {
     const today = new Date().toISOString().slice(0, 10)
     const backupData: BackupData = {
@@ -790,6 +802,13 @@ function App() {
                       <time className="card-date" dateTime={card.createdAt}>
                         {new Date(card.createdAt).toLocaleString()}
                       </time>
+                      <button
+                        className="delete-card-button"
+                        type="button"
+                        onClick={() => deleteCard(card.id)}
+                      >
+                        Delete
+                      </button>
                     </li>
                   ))}
                 </ul>
