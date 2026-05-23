@@ -33,8 +33,29 @@ function highlightTargetWord(sentence: string, targetWord: string) {
   return sentence.replace(targetWord, (match) => `<b>${match}</b>`)
 }
 
+function splitTextIntoSentences(text: string) {
+  const textParts = text.split('.')
+  const textEndsWithPeriod = text.trim().endsWith('.')
+
+  return textParts
+    .map((part, index) => {
+      const sentencePart = part.trim()
+      const isLastPart = index === textParts.length - 1
+      const shouldKeepPeriod = !isLastPart || textEndsWithPeriod
+
+      if (!sentencePart) {
+        return ''
+      }
+
+      return shouldKeepPeriod ? `${sentencePart}.` : sentencePart
+    })
+    .filter(Boolean)
+}
+
 function App() {
   const [sentence, setSentence] = useState(initialSentence)
+  const [sentences, setSentences] = useState<string[]>([])
+  const [currentSentenceIndex, setCurrentSentenceIndex] = useState(0)
   const [selectedWord, setSelectedWord] = useState('')
   const [clipboardError, setClipboardError] = useState('')
   const [cardError, setCardError] = useState('')
@@ -48,6 +69,8 @@ function App() {
   const [cardsLoaded, setCardsLoaded] = useState(false)
 
   const words = sentence.trim().split(/\s+/).filter(Boolean)
+  const isMultiSentenceFlow = sentences.length > 1
+  const hasNextSentence = currentSentenceIndex < sentences.length - 1
 
   useEffect(() => {
     const savedCards = localStorage.getItem(cardsStorageKey)
@@ -83,7 +106,7 @@ function App() {
     localStorage.setItem(cardsStorageKey, JSON.stringify(cards))
   }, [cards, cardsLoaded])
 
-  function updateSentence(nextSentence: string) {
+  function resetSentenceWork(nextSentence: string) {
     setSentence(nextSentence)
     setSelectedWord('')
     setClipboardError('')
@@ -91,6 +114,28 @@ function App() {
     setExportError('')
     setTranslationError('')
     setTranslation(null)
+  }
+
+  function updateSentence(nextSentence: string) {
+    setSentences([])
+    setCurrentSentenceIndex(0)
+    resetSentenceWork(nextSentence)
+  }
+
+  function moveToSentence(nextIndex: number) {
+    if (nextIndex >= sentences.length) {
+      setSentences([])
+      setCurrentSentenceIndex(0)
+      return
+    }
+
+    setCurrentSentenceIndex(nextIndex)
+    resetSentenceWork(sentences[nextIndex])
+  }
+
+  function stopSentenceFlow() {
+    setSentences([])
+    setCurrentSentenceIndex(0)
   }
 
   function selectWord(word: string) {
@@ -110,6 +155,15 @@ function App() {
 
       if (!nextSentence) {
         setClipboardError('Die Zwischenablage ist leer.')
+        return
+      }
+
+      const pastedSentences = splitTextIntoSentences(nextSentence)
+
+      if (pastedSentences.length > 1) {
+        setSentences(pastedSentences)
+        setCurrentSentenceIndex(0)
+        resetSentenceWork(pastedSentences[0])
         return
       }
 
@@ -317,6 +371,36 @@ function App() {
             <p className="error-message" role="alert">
               {clipboardError}
             </p>
+          ) : null}
+          {isMultiSentenceFlow ? (
+            <>
+              <p className="empty-state">
+                Sentence {currentSentenceIndex + 1} of {sentences.length}
+              </p>
+              <button
+                className="export-button"
+                type="button"
+                onClick={() => moveToSentence(currentSentenceIndex + 1)}
+                disabled={!hasNextSentence}
+              >
+                Next sentence
+              </button>
+              <button
+                className="export-button"
+                type="button"
+                onClick={() => moveToSentence(currentSentenceIndex + 1)}
+                disabled={!hasNextSentence}
+              >
+                Skip sentence
+              </button>
+              <button
+                className="save-button"
+                type="button"
+                onClick={stopSentenceFlow}
+              >
+                Stop
+              </button>
+            </>
           ) : null}
 
           <div className="word-list" aria-label="Selectable words">
