@@ -237,36 +237,47 @@ function App() {
     setIsGenerating(true)
 
     try {
-      const nextTranslations: Record<string, TranslationResult> = {}
+      const nextTranslations: Record<string, TranslationResult> = {
+        ...translations,
+      }
+      const failedWords: string[] = []
 
       for (const targetWord of cleanedTargetWords) {
-        const response = await fetch('https://kindle-to-anki-api.insafhamzu24.workers.dev/', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            sentence: cleanedSentence,
-            targetWord,
-          }),
-        })
+        try {
+          const response = await fetch('https://kindle-to-anki-api.insafhamzu24.workers.dev/', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              sentence: cleanedSentence,
+              targetWord,
+            }),
+          })
 
-        const data = await response.json()
+          const data = await response.json()
 
-        if (!response.ok) {
-          throw new Error(data.error || 'Bedeutung konnte nicht generiert werden.')
-        }
+          if (!response.ok) {
+            failedWords.push(targetWord)
+            continue
+          }
 
-        nextTranslations[getTranslationKey(targetWord)] = {
-          meaning: data.meaning,
-          explanation: data.explanation,
+          nextTranslations[getTranslationKey(targetWord)] = {
+            meaning: data.meaning,
+            explanation: data.explanation,
+          }
+        } catch {
+          failedWords.push(targetWord)
         }
       }
 
       setTranslations(nextTranslations)
-    } catch {
-      setTranslations({})
-      setTranslationError('Backend konnte nicht erreicht werden.')
+
+      if (failedWords.length > 0) {
+        setTranslationError(
+          `Keine Bedeutung generiert f\u00fcr: ${failedWords.join(', ')}`,
+        )
+      }
     } finally {
       setIsGenerating(false)
     }
@@ -486,6 +497,7 @@ function App() {
             className="clipboard-button"
             type="button"
             onClick={pasteFromClipboard}
+            disabled={isGenerating}
           >
             {'Aus Zwischenablage einf\u00fcgen'}
           </button>
@@ -503,7 +515,7 @@ function App() {
                 className="export-button"
                 type="button"
                 onClick={() => moveToSentence(currentSentenceIndex + 1)}
-                disabled={!hasNextSentence}
+                disabled={!hasNextSentence || isGenerating}
               >
                 Next sentence
               </button>
@@ -511,7 +523,7 @@ function App() {
                 className="export-button"
                 type="button"
                 onClick={() => moveToSentence(currentSentenceIndex + 1)}
-                disabled={!hasNextSentence}
+                disabled={!hasNextSentence || isGenerating}
               >
                 Skip sentence
               </button>
@@ -519,6 +531,7 @@ function App() {
                 className="save-button"
                 type="button"
                 onClick={stopSentenceFlow}
+                disabled={isGenerating}
               >
                 Stop
               </button>
@@ -536,6 +549,7 @@ function App() {
                   type="button"
                   onClick={() => selectWord(word)}
                   aria-pressed={isSelected}
+                  disabled={isGenerating}
                 >
                   {word}
                 </button>
@@ -551,14 +565,20 @@ function App() {
               ? selectedWords.join(', ')
               : 'Noch kein Wort ausgew\u00e4hlt'}
           </p>
-          <button
-            className="generate-button"
-            type="button"
-            onClick={generateMeaning}
-            disabled={isGenerating}
-          >
-            {isGenerating ? 'Generating...' : 'Bedeutung generieren'}
-          </button>
+          {selectedWords.length > 0 ? (
+            <button
+              className="generate-button"
+              type="button"
+              onClick={generateMeaning}
+              disabled={isGenerating}
+            >
+              {isGenerating
+                ? 'Generating...'
+                : selectedWords.length === 1
+                  ? 'Generate'
+                  : 'Generate all'}
+            </button>
+          ) : null}
           {translationError ? (
             <p className="error-message" role="alert">
               {translationError}
@@ -595,7 +615,12 @@ function App() {
 
         <section className="selected-panel" aria-label="Save card">
           <p className="panel-label">Karte</p>
-          <button className="save-button" type="button" onClick={saveCard}>
+          <button
+            className="save-button"
+            type="button"
+            onClick={saveCard}
+            disabled={isGenerating}
+          >
             Karte speichern
           </button>
           {cardError ? (
