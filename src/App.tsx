@@ -328,7 +328,9 @@ function App() {
     })
 
     if (duplicateTargetWord) {
-      setCardError(`Diese Karte existiert bereits: ${duplicateTargetWord}`)
+      setCardError(
+        `You already saved '${duplicateTargetWord}' in this sentence.`,
+      )
       return
     }
 
