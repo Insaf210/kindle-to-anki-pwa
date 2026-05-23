@@ -33,6 +33,29 @@ const allowedLanguageStyles = [
   'literary',
   'advanced',
 ]
+const allowedSuggestedTags = [
+  'verb',
+  'noun',
+  'adjective',
+  'adverb',
+  'idiom',
+  'phrasal-verb',
+  'collocation',
+  'compound-noun',
+  'formal',
+  'informal',
+  'slang',
+  'business',
+  'academic',
+  'literary',
+  'advanced',
+  'everyday',
+  'emotion',
+  'action',
+  'abstract',
+  'concrete',
+]
+const allowedSuggestedTagSet = new Set(allowedSuggestedTags)
 
 type SavedCard = {
   id: string
@@ -44,7 +67,6 @@ type SavedCard = {
   source?: string
   tags?: string
   languageStyle?: string
-  quality?: CardQuality
   exportedAt?: string | null
 }
 
@@ -52,12 +74,12 @@ type TranslationResult = {
   meaning: string
   explanation: string
   languageStyle?: string
+  suggestedTags: string[]
 }
 
 type CardStatusFilter = 'all' | 'new' | 'exported'
 type CardSearchMode = 'target' | 'everywhere'
 type CsvExportMode = 'new' | 'all' | 'selected'
-type CardQuality = 'good' | 'needs edit' | 'hard' | 'important'
 
 type BackupData = {
   app: string
@@ -82,6 +104,52 @@ function getTranslationKey(targetWord: string) {
 
 function normalizeTags(value: string) {
   return value.trim().replace(/[,\s]+/g, ' ')
+}
+
+function formatTagsForDisplay(value: string) {
+  return normalizeTags(value).split(' ').filter(Boolean).join(', ')
+}
+
+function cleanSuggestedTags(value: unknown) {
+  if (!Array.isArray(value)) {
+    return []
+  }
+
+  const cleanedTags = value
+    .filter((tag): tag is string => typeof tag === 'string')
+    .map((tag) => tag.trim().toLowerCase())
+    .filter((tag) => allowedSuggestedTagSet.has(tag))
+
+  return Array.from(new Set(cleanedTags)).slice(0, 4)
+}
+
+function inferSuggestedTags(targetWord: string, sentence: string) {
+  const normalizedText = normalizeValue(`${targetWord} ${sentence}`)
+  const tags: string[] = []
+
+  if (/\b(gave up|give up|looked forward to|look forward to|turned out|turn out|ran into|run into)\b/.test(normalizedText)) {
+    tags.push('phrasal-verb', 'verb')
+  } else if (targetWord.includes(' ')) {
+    tags.push('collocation')
+  }
+
+  if (/\b(methodology|research|academic|analysis|hypothesis)\b/.test(normalizedText)) {
+    tags.push('academic', 'abstract')
+  }
+
+  if (/\b(sustainable growth|market|company|business|revenue|strategy)\b/.test(normalizedText)) {
+    tags.push('business', 'collocation')
+  }
+
+  if (/\b(gave up|give up|overcame|run|ran|turn|turned|look|looked)\b/.test(normalizedText)) {
+    tags.push('action')
+  }
+
+  if (tags.length === 0) {
+    tags.push('everyday')
+  }
+
+  return Array.from(new Set(tags)).slice(0, 4)
 }
 
 function escapeCsvValue(value: string | number | null | undefined) {
@@ -217,8 +285,7 @@ function App() {
   const lastClipboardPromptRef = useRef('')
   const [sentence, setSentence] = useState(initialSentence)
   const [sessionSource, setSessionSource] = useState('Kindle')
-  const [sessionTags, setSessionTags] = useState('')
-  const [sessionQuality, setSessionQuality] = useState<CardQuality>('good')
+  const [tagDrafts, setTagDrafts] = useState<Record<string, string>>({})
   const [sentences, setSentences] = useState<string[]>([])
   const [currentSentenceIndex, setCurrentSentenceIndex] = useState(0)
   const [selectedWords, setSelectedWords] = useState<string[]>([])
@@ -267,7 +334,6 @@ function App() {
               card.source || '',
               card.tags || '',
               card.languageStyle || '',
-              card.quality || '',
             ]
       const matchesSearch =
         !normalizedCardSearch ||
@@ -323,7 +389,7 @@ function App() {
         setCards(
           (parsedCards as SavedCard[]).map((card) => ({
             ...card,
-            quality: card.quality || 'good',
+            tags: card.tags || '',
             exportedAt: card.exportedAt ?? null,
           })),
         )
@@ -473,6 +539,58 @@ function App() {
     setCardError('')
     setTranslationError('')
     setTranslations({})
+  }
+
+  function removeSuggestedTag(targetWord: string, tagToRemove: string) {
+    setTranslations((currentTranslations) => {
+      const translationKey = getTranslationKey(targetWord)
+      const translation = currentTranslations[translationKey]
+
+      if (!translation) {
+        return currentTranslations
+      }
+
+      return {
+        ...currentTranslations,
+        [translationKey]: {
+          ...translation,
+          suggestedTags: translation.suggestedTags.filter(
+            (tag) => tag !== tagToRemove,
+          ),
+        },
+      }
+    })
+  }
+
+  function addSuggestedTag(targetWord: string, tagToAdd: string) {
+    const cleanedTag = tagToAdd.trim().toLowerCase()
+    const translationKey = getTranslationKey(targetWord)
+
+    if (!allowedSuggestedTagSet.has(cleanedTag)) {
+      setCardError('Please use one of the allowed tags.')
+      return
+    }
+
+    setTranslations((currentTranslations) => {
+      const translation = currentTranslations[translationKey]
+
+      if (!translation || translation.suggestedTags.includes(cleanedTag)) {
+        return currentTranslations
+      }
+
+      return {
+        ...currentTranslations,
+        [translationKey]: {
+          ...translation,
+          suggestedTags: [...translation.suggestedTags, cleanedTag].slice(0, 4),
+        },
+      }
+    })
+    setTagDrafts((currentDrafts) => ({
+      ...currentDrafts,
+      [translationKey]: '',
+    }))
+    setCardError('')
   }
 
   async function suggestPhrases() {
@@ -663,6 +781,14 @@ function App() {
             failedWords.push(targetWord)
             continue
           }
+          const suggestedTags = cleanSuggestedTags(data.suggestedTags)
+          const parsedSuggestedTags =
+            suggestedTags.length > 0
+              ? suggestedTags
+              : inferSuggestedTags(targetWord, cleanedSentence)
+
+          console.log('AI response:', data)
+          console.log('Parsed suggestedTags:', parsedSuggestedTags)
 
           nextTranslations[getTranslationKey(targetWord)] = {
             meaning: data.meaning,
@@ -672,6 +798,7 @@ function App() {
               targetWord,
               cleanedSentence,
             ),
+            suggestedTags: parsedSuggestedTags,
           }
         } catch {
           serviceCouldNotBeReached = true
@@ -768,21 +895,22 @@ function App() {
 
     const createdAt = new Date().toISOString()
     const cleanedSource = sessionSource.trim() || 'Kindle'
-    const cleanedTags = normalizeTags(sessionTags)
-    const newCards: SavedCard[] = cleanedTargetWords.map((targetWord, index) => ({
-      id: `${Date.now()}-${index}`,
-      sentence: cleanedSentence,
-      targetWord,
-      meaning: translations[getTranslationKey(targetWord)].meaning,
-      explanation: translations[getTranslationKey(targetWord)].explanation,
-      languageStyle:
-        translations[getTranslationKey(targetWord)].languageStyle || 'simple',
-      source: cleanedSource,
-      tags: cleanedTags,
-      quality: sessionQuality,
-      createdAt,
-      exportedAt: null,
-    }))
+    const newCards: SavedCard[] = cleanedTargetWords.map((targetWord, index) => {
+      const translation = translations[getTranslationKey(targetWord)]
+
+      return {
+        id: `${Date.now()}-${index}`,
+        sentence: cleanedSentence,
+        targetWord,
+        meaning: translation.meaning,
+        explanation: translation.explanation,
+        languageStyle: translation.languageStyle || 'simple',
+        source: cleanedSource,
+        tags: translation.suggestedTags.join(' '),
+        createdAt,
+        exportedAt: null,
+      }
+    })
 
     setCards((currentCards) => [...newCards, ...currentCards])
     setCardError('')
@@ -818,7 +946,6 @@ function App() {
       'Source',
       'Tags',
       'LanguageStyle',
-      'Quality',
     ]
     const csvRows = cardsToExport.map((card) =>
       [
@@ -830,7 +957,6 @@ function App() {
         card.source || 'Kindle',
         card.tags || '',
         card.languageStyle || '',
-        card.quality || 'good',
       ]
         .map(escapeCsvValue)
         .join(','),
@@ -973,7 +1099,6 @@ function App() {
               source: editDraft.source?.trim() || editDraft.source,
               tags: normalizeTags(editDraft.tags || ''),
               languageStyle: editDraft.languageStyle?.trim() || '',
-              quality: editDraft.quality || 'good',
             }
           : card,
       ),
@@ -1042,7 +1167,7 @@ function App() {
 
       const importedCards = parsedBackup.cards.map((card: SavedCard) => ({
         ...card,
-        quality: card.quality || 'good',
+        tags: card.tags || '',
         exportedAt: card.exportedAt ?? null,
       }))
 
@@ -1255,6 +1380,59 @@ function App() {
                         Style: {translation.languageStyle}
                       </p>
                     ) : null}
+                    <div className="tag-editor">
+                      <p className="result-style">Tags</p>
+                      {translation.suggestedTags.length > 0 ? (
+                        <div
+                          className="tag-chip-row"
+                          aria-label="Suggested tags"
+                        >
+                          {translation.suggestedTags.map((tag) => (
+                            <button
+                              className="tag-chip"
+                              key={tag}
+                              type="button"
+                              onClick={() => removeSuggestedTag(targetWord, tag)}
+                              aria-label={`Remove ${tag} tag`}
+                            >
+                              {tag} x
+                            </button>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="empty-state">No tags suggested yet.</p>
+                      )}
+                      <div className="tag-add-row">
+                        <select
+                          value={tagDrafts[getTranslationKey(targetWord)] || ''}
+                          onChange={(event) =>
+                            setTagDrafts((currentDrafts) => ({
+                              ...currentDrafts,
+                              [getTranslationKey(targetWord)]:
+                                event.target.value,
+                            }))
+                          }
+                        >
+                          <option value="">Choose a tag</option>
+                          {allowedSuggestedTags.map((tag) => (
+                            <option key={tag} value={tag}>
+                              {tag}
+                            </option>
+                          ))}
+                        </select>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            addSuggestedTag(
+                              targetWord,
+                              tagDrafts[getTranslationKey(targetWord)] || '',
+                            )
+                          }
+                        >
+                          Add
+                        </button>
+                      </div>
+                    </div>
                   </div>
                 )
               })}
@@ -1274,30 +1452,6 @@ function App() {
               onChange={(event) => setSessionSource(event.target.value)}
               placeholder="Kindle"
             />
-          </label>
-          <label className="metadata-label" htmlFor="tags-input">
-            Tags
-            <input
-              id="tags-input"
-              value={sessionTags}
-              onChange={(event) => setSessionTags(event.target.value)}
-              placeholder="optional, e.g. fiction verbs"
-            />
-          </label>
-          <label className="metadata-label" htmlFor="quality-input">
-            Quality
-            <select
-              id="quality-input"
-              value={sessionQuality}
-              onChange={(event) =>
-                setSessionQuality(event.target.value as CardQuality)
-              }
-            >
-              <option value="good">good</option>
-              <option value="needs edit">needs edit</option>
-              <option value="hard">hard</option>
-              <option value="important">important</option>
-            </select>
           </label>
           <button
             className="save-button"
@@ -1528,20 +1682,6 @@ function App() {
                               }
                             />
                           </label>
-                          <label>
-                            Quality
-                            <select
-                              value={editDraft.quality || 'good'}
-                              onChange={(event) =>
-                                updateEditDraft('quality', event.target.value)
-                              }
-                            >
-                              <option value="good">good</option>
-                              <option value="needs edit">needs edit</option>
-                              <option value="hard">hard</option>
-                              <option value="important">important</option>
-                            </select>
-                          </label>
                           <div className="card-action-row">
                             <button
                               className="save-edit-button"
@@ -1604,7 +1744,10 @@ function App() {
                           ) : null}
                           {card.tags ? (
                             <p className="card-tags">
-                              {highlightSearchText(card.tags, cardSearch)}
+                              {highlightSearchText(
+                                formatTagsForDisplay(card.tags),
+                                cardSearch,
+                              )}
                             </p>
                           ) : null}
                           {card.languageStyle ? (
@@ -1616,9 +1759,6 @@ function App() {
                               )}
                             </p>
                           ) : null}
-                          <p className="card-quality">
-                            Quality: {card.quality || 'good'}
-                          </p>
                           <time className="card-date" dateTime={card.createdAt}>
                             {new Date(card.createdAt).toLocaleString()}
                           </time>
