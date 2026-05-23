@@ -23,6 +23,10 @@ function normalizeValue(value: string) {
   return value.trim().toLowerCase().replace(/\s+/g, ' ')
 }
 
+function getTranslationKey(targetWord: string) {
+  return normalizeValue(targetWord)
+}
+
 function escapeCsvValue(value: string | number | null | undefined) {
   const textValue = String(value ?? '')
 
@@ -179,7 +183,9 @@ function App() {
 
   async function generateMeaning() {
     const cleanedSentence = sentence.trim()
-    const cleanedTargetWords = selectedWords.map((word) => word.trim())
+    const cleanedTargetWords = selectedWords
+      .map((word) => word.trim())
+      .filter(Boolean)
 
     setTranslationError('')
     setCardError('')
@@ -219,7 +225,7 @@ function App() {
           throw new Error(data.error || 'Bedeutung konnte nicht generiert werden.')
         }
 
-        nextTranslations[targetWord] = {
+        nextTranslations[getTranslationKey(targetWord)] = {
           meaning: data.meaning,
           explanation: data.explanation,
         }
@@ -236,7 +242,9 @@ function App() {
 
   function saveCard() {
     const cleanedSentence = sentence.trim()
-    const cleanedTargetWords = selectedWords.map((word) => word.trim())
+    const cleanedTargetWords = selectedWords
+      .map((word) => word.trim())
+      .filter(Boolean)
 
     if (!cleanedSentence) {
       setCardError('Der Satz darf nicht leer sein.')
@@ -248,12 +256,16 @@ function App() {
       return
     }
 
-    const missingTranslation = cleanedTargetWords.some(
-      (targetWord) => !translations[targetWord]?.meaning,
-    )
+    const missingTranslation = cleanedTargetWords.some((targetWord) => {
+      const translation = translations[getTranslationKey(targetWord)]
+
+      return !translation?.meaning
+    })
 
     if (missingTranslation) {
-      setCardError('Bitte zuerst Bedeutung generieren.')
+      setCardError(
+        'Bitte f\u00fcr alle ausgew\u00e4hlten W\u00f6rter zuerst eine Bedeutung generieren.',
+      )
       return
     }
 
@@ -282,8 +294,8 @@ function App() {
       id: `${Date.now()}-${index}`,
       sentence: cleanedSentence,
       targetWord,
-      meaning: translations[targetWord].meaning,
-      explanation: translations[targetWord].explanation,
+      meaning: translations[getTranslationKey(targetWord)].meaning,
+      explanation: translations[getTranslationKey(targetWord)].explanation,
       createdAt,
       exportedAt: null,
     }))
@@ -458,7 +470,7 @@ function App() {
           {Object.keys(translations).length > 0 ? (
             <div className="result-content">
               {selectedWords.map((targetWord) => {
-                const translation = translations[targetWord]
+                const translation = translations[getTranslationKey(targetWord)]
 
                 if (!translation) {
                   return null
