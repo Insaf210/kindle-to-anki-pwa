@@ -56,15 +56,15 @@ function App() {
   const [sentence, setSentence] = useState(initialSentence)
   const [sentences, setSentences] = useState<string[]>([])
   const [currentSentenceIndex, setCurrentSentenceIndex] = useState(0)
-  const [selectedWord, setSelectedWord] = useState('')
+  const [selectedWords, setSelectedWords] = useState<string[]>([])
   const [clipboardError, setClipboardError] = useState('')
   const [cardError, setCardError] = useState('')
   const [exportError, setExportError] = useState('')
   const [translationError, setTranslationError] = useState('')
   const [isGenerating, setIsGenerating] = useState(false)
-  const [translation, setTranslation] = useState<TranslationResult | null>(
-    null,
-  )
+  const [translations, setTranslations] = useState<
+    Record<string, TranslationResult>
+  >({})
   const [cards, setCards] = useState<SavedCard[]>([])
   const [cardsLoaded, setCardsLoaded] = useState(false)
 
@@ -108,12 +108,12 @@ function App() {
 
   function resetSentenceWork(nextSentence: string) {
     setSentence(nextSentence)
-    setSelectedWord('')
+    setSelectedWords([])
     setClipboardError('')
     setCardError('')
     setExportError('')
     setTranslationError('')
-    setTranslation(null)
+    setTranslations({})
   }
 
   function updateSentence(nextSentence: string) {
@@ -139,11 +139,15 @@ function App() {
   }
 
   function selectWord(word: string) {
-    setSelectedWord(word)
+    setSelectedWords((currentWords) =>
+      currentWords.includes(word)
+        ? currentWords.filter((currentWord) => currentWord !== word)
+        : [...currentWords, word],
+    )
     setCardError('')
     setExportError('')
     setTranslationError('')
-    setTranslation(null)
+    setTranslations({})
   }
 
   async function pasteFromClipboard() {
@@ -175,7 +179,7 @@ function App() {
 
   async function generateMeaning() {
     const cleanedSentence = sentence.trim()
-    const cleanedTargetWord = selectedWord.trim()
+    const cleanedTargetWords = selectedWords.map((word) => word.trim())
 
     setTranslationError('')
     setCardError('')
@@ -186,40 +190,44 @@ function App() {
       return
     }
 
-    if (!cleanedTargetWord) {
-      setTranslation(null)
-      setTranslationError('Bitte w\u00e4hle ein Zielwort aus.')
+    if (cleanedTargetWords.length === 0) {
+      setTranslations({})
+      setTranslationError('Bitte w\u00e4hle mindestens ein Zielwort aus.')
       return
     }
 
     setIsGenerating(true)
 
     try {
-      const response = await fetch('https://kindle-to-anki-api.insafhamzu24.workers.dev/', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          sentence: cleanedSentence,
-          targetWord: cleanedTargetWord,
-        }),
-      })
+      const nextTranslations: Record<string, TranslationResult> = {}
 
-      const data = await response.json()
+      for (const targetWord of cleanedTargetWords) {
+        const response = await fetch('https://kindle-to-anki-api.insafhamzu24.workers.dev/', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            sentence: cleanedSentence,
+            targetWord,
+          }),
+        })
 
-      if (!response.ok) {
-        setTranslation(null)
-        setTranslationError(data.error || 'Bedeutung konnte nicht generiert werden.')
-        return
+        const data = await response.json()
+
+        if (!response.ok) {
+          throw new Error(data.error || 'Bedeutung konnte nicht generiert werden.')
+        }
+
+        nextTranslations[targetWord] = {
+          meaning: data.meaning,
+          explanation: data.explanation,
+        }
       }
 
-      setTranslation({
-        meaning: data.meaning,
-        explanation: data.explanation,
-      })
+      setTranslations(nextTranslations)
     } catch {
-      setTranslation(null)
+      setTranslations({})
       setTranslationError('Backend konnte nicht erreicht werden.')
     } finally {
       setIsGenerating(false)
@@ -228,58 +236,53 @@ function App() {
 
   function saveCard() {
     const cleanedSentence = sentence.trim()
-    const cleanedTargetWord = selectedWord.trim()
+    const cleanedTargetWords = selectedWords.map((word) => word.trim())
 
     if (!cleanedSentence) {
       setCardError('Der Satz darf nicht leer sein.')
       return
     }
 
-    if (!cleanedTargetWord) {
-      setCardError('Bitte w\u00e4hle ein Zielwort aus.')
+    if (cleanedTargetWords.length === 0) {
+      setCardError('Bitte w\u00e4hle mindestens ein Zielwort aus.')
       return
     }
 
-    if (!translation?.meaning) {
+    const missingTranslation = cleanedTargetWords.some(
+      (targetWord) => !translations[targetWord]?.meaning,
+    )
+
+    if (missingTranslation) {
       setCardError('Bitte zuerst Bedeutung generieren.')
       return
     }
 
     const normalizedSentence = normalizeValue(cleanedSentence)
-    const normalizedTargetWord = normalizeValue(cleanedTargetWord)
-    const sentenceExists = cards.some(
-      (card) => normalizeValue(card.sentence) === normalizedSentence,
+    const duplicateTargetWord = cleanedTargetWords.find((targetWord) =>
+      cards.some(
+        (card) =>
+          normalizeValue(card.sentence) === normalizedSentence &&
+          normalizeValue(card.targetWord) === normalizeValue(targetWord),
+      ),
     )
-    const targetWordExists = cards.some(
-      (card) => normalizeValue(card.targetWord) === normalizedTargetWord,
-    )
 
-    if (sentenceExists && targetWordExists) {
-      setCardError('Dieser Satz und dieses Zielwort existieren bereits.')
+    if (duplicateTargetWord) {
+      setCardError(`Diese Karte existiert bereits: ${duplicateTargetWord}`)
       return
     }
 
-    if (sentenceExists) {
-      setCardError('Dieser Satz existiert bereits.')
-      return
-    }
-
-    if (targetWordExists) {
-      setCardError('Dieses Zielwort existiert bereits.')
-      return
-    }
-
-    const newCard: SavedCard = {
-      id: Date.now().toString(),
+    const createdAt = new Date().toISOString()
+    const newCards: SavedCard[] = cleanedTargetWords.map((targetWord, index) => ({
+      id: `${Date.now()}-${index}`,
       sentence: cleanedSentence,
-      targetWord: cleanedTargetWord,
-      meaning: translation.meaning,
-      explanation: translation.explanation,
-      createdAt: new Date().toISOString(),
+      targetWord,
+      meaning: translations[targetWord].meaning,
+      explanation: translations[targetWord].explanation,
+      createdAt,
       exportedAt: null,
-    }
+    }))
 
-    setCards((currentCards) => [newCard, ...currentCards])
+    setCards((currentCards) => [...newCards, ...currentCards])
     setCardError('')
   }
 
@@ -405,7 +408,7 @@ function App() {
 
           <div className="word-list" aria-label="Selectable words">
             {words.map((word, index) => {
-              const isSelected = selectedWord === word
+              const isSelected = selectedWords.includes(word)
 
               return (
                 <button
@@ -425,7 +428,9 @@ function App() {
         <section className="selected-panel" aria-label="Selected word">
           <p className="panel-label">{'Ausgew\u00e4hltes Wort'}</p>
           <p className="selected-word">
-            {selectedWord || 'Noch kein Wort ausgew\u00e4hlt'}
+            {selectedWords.length > 0
+              ? selectedWords.join(', ')
+              : 'Noch kein Wort ausgew\u00e4hlt'}
           </p>
           <button
             className="generate-button"
@@ -444,10 +449,25 @@ function App() {
 
         <section className="result-panel" aria-label="Translation result">
           <p className="panel-label">KI-Ergebnis</p>
-          {translation ? (
+          {Object.keys(translations).length > 0 ? (
             <div className="result-content">
-              <p className="result-meaning">{translation.meaning}</p>
-              <p className="result-explanation">{translation.explanation}</p>
+              {selectedWords.map((targetWord) => {
+                const translation = translations[targetWord]
+
+                if (!translation) {
+                  return null
+                }
+
+                return (
+                  <div key={targetWord}>
+                    <p className="result-meaning">{targetWord}</p>
+                    <p className="result-explanation">{translation.meaning}</p>
+                    <p className="result-explanation">
+                      {translation.explanation}
+                    </p>
+                  </div>
+                )
+              })}
             </div>
           ) : (
             <p className="empty-state">Noch keine Bedeutung generiert.</p>
