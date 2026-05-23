@@ -102,6 +102,7 @@ function App() {
   >({})
   const [cards, setCards] = useState<SavedCard[]>([])
   const [cardsLoaded, setCardsLoaded] = useState(false)
+  const [isCardsExpanded, setIsCardsExpanded] = useState(false)
 
   const words = sentence.trim().split(/\s+/).filter(Boolean)
   const isMultiSentenceFlow = sentences.length > 1
@@ -679,74 +680,87 @@ function App() {
         </section>
 
         <section className="cards-panel" aria-label="Saved cards">
-          <div className="cards-header">
-            <p className="panel-label">Gespeicherte Karten</p>
-            <span className="card-count">{cards.length}</span>
-          </div>
           <button
-            className="export-button"
+            className="cards-toggle"
             type="button"
-            onClick={exportNewCardsAsCsv}
+            onClick={() => setIsCardsExpanded((isExpanded) => !isExpanded)}
+            aria-expanded={isCardsExpanded}
           >
-            Neue Karten als CSV exportieren
+            <span>Saved cards ({cards.length})</span>
+            <span>{isCardsExpanded ? 'Close' : 'Open'}</span>
           </button>
-          <button className="export-button" type="button" onClick={exportBackup}>
-            Export Backup
-          </button>
-          <button
-            className="export-button"
-            type="button"
-            onClick={openBackupImport}
-          >
-            Import Backup
-          </button>
-          <input
-            ref={backupInputRef}
-            className="backup-input"
-            type="file"
-            accept="application/json,.json"
-            onChange={importBackup}
-          />
-          {exportError ? (
-            <p className="error-message" role="alert">
-              {exportError}
-            </p>
+          {isCardsExpanded ? (
+            <>
+              <button
+                className="export-button"
+                type="button"
+                onClick={exportNewCardsAsCsv}
+              >
+                Neue Karten als CSV exportieren
+              </button>
+              <button
+                className="export-button"
+                type="button"
+                onClick={exportBackup}
+              >
+                Export Backup
+              </button>
+              <button
+                className="export-button"
+                type="button"
+                onClick={openBackupImport}
+              >
+                Import Backup
+              </button>
+              <input
+                ref={backupInputRef}
+                className="backup-input"
+                type="file"
+                accept="application/json,.json"
+                onChange={importBackup}
+              />
+              {exportError ? (
+                <p className="error-message" role="alert">
+                  {exportError}
+                </p>
+              ) : null}
+              {backupError ? (
+                <p className="error-message" role="alert">
+                  {backupError}
+                </p>
+              ) : null}
+              {cards.length > 0 ? (
+                <ul className="card-list">
+                  {cards.map((card) => (
+                    <li className="saved-card" key={card.id}>
+                      <div className="card-title-row">
+                        <p className="card-word">{card.targetWord}</p>
+                        <span
+                          className={`export-status${
+                            card.exportedAt ? ' exported' : ''
+                          }`}
+                        >
+                          {card.exportedAt ? 'Exportiert' : 'Neu'}
+                        </span>
+                      </div>
+                      {card.meaning ? (
+                        <p className="card-meaning">{card.meaning}</p>
+                      ) : null}
+                      <p className="card-sentence">{card.sentence}</p>
+                      {card.explanation ? (
+                        <p className="card-explanation">{card.explanation}</p>
+                      ) : null}
+                      <time className="card-date" dateTime={card.createdAt}>
+                        {new Date(card.createdAt).toLocaleString()}
+                      </time>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="empty-state">Noch keine Karten gespeichert.</p>
+              )}
+            </>
           ) : null}
-          {backupError ? (
-            <p className="error-message" role="alert">
-              {backupError}
-            </p>
-          ) : null}
-          {cards.length > 0 ? (
-            <ul className="card-list">
-              {cards.map((card) => (
-                <li className="saved-card" key={card.id}>
-                  <div className="card-title-row">
-                    <p className="card-word">{card.targetWord}</p>
-                    <span
-                      className={`export-status${
-                        card.exportedAt ? ' exported' : ''
-                      }`}
-                    >
-                      {card.exportedAt ? 'Exportiert' : 'Neu'}
-                    </span>
-                  </div>
-                  {card.meaning ? (
-                    <p className="card-meaning">{card.meaning}</p>
-                  ) : null}
-                  <p className="card-sentence">{card.sentence}</p>
-                  {card.explanation ? (
-                    <p className="card-explanation">{card.explanation}</p>
-                  ) : null}
-                  <time className="card-date" dateTime={card.createdAt}>
-                    {new Date(card.createdAt).toLocaleString()}
-                  </time>
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p className="empty-state">Noch keine Karten gespeichert.</p>
-          )}
         </section>
       </section>
     </main>
