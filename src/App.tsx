@@ -5,6 +5,8 @@ const initialSentence = 'This is an example sentence.'
 const cardsStorageKey = 'send-to-anki-cards'
 const lastBackupStorageKey = 'send-to-anki-last-backup-at'
 const translationApiUrl = 'https://kindle-to-anki-api.insafhamzu24.workers.dev/'
+const ankiMobileDeckName = 'English Vocab'
+const ankiMobileNoteType = 'com.example.kindle_to_anki.basic'
 const backupReminderCardCount = 50
 const recentBackupDays = 7
 const phraseSuggestionPatterns = [
@@ -160,6 +162,60 @@ function escapeCsvValue(value: string | number | null | undefined) {
 
 function highlightTargetWord(sentence: string, targetWord: string) {
   return sentence.replace(targetWord, (match) => `<b>${match}</b>`)
+}
+
+function escapeHtml(value: string) {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+}
+
+function textToHtml(value: string) {
+  return escapeHtml(value).replace(/\r?\n/g, '<br>')
+}
+
+function highlightTargetWordForAnki(sentence: string, targetWord: string) {
+  const matchIndex = sentence.toLowerCase().indexOf(targetWord.toLowerCase())
+
+  if (matchIndex === -1) {
+    return textToHtml(sentence)
+  }
+
+  const beforeMatch = sentence.slice(0, matchIndex)
+  const matchedText = sentence.slice(matchIndex, matchIndex + targetWord.length)
+  const afterMatch = sentence.slice(matchIndex + targetWord.length)
+
+  return `${textToHtml(beforeMatch)}<b>${textToHtml(matchedText)}</b>${textToHtml(afterMatch)}`
+}
+
+function buildAnkiMobileAddNoteUrl(card: SavedCard) {
+  const front = highlightTargetWordForAnki(card.sentence, card.targetWord)
+  const backParts = [
+    `<b>${textToHtml(card.targetWord)}</b>`,
+    textToHtml(card.meaning || ''),
+    textToHtml(card.explanation || ''),
+  ].filter(Boolean)
+  const back = backParts.join('<br><br>')
+  const parameters: Array<[string, string]> = [
+    ['type', ankiMobileNoteType],
+    ['deck', ankiMobileDeckName],
+    ['fldFront', front],
+    ['fldBack', back],
+  ]
+  const tags = normalizeTags(card.tags || '')
+
+  if (tags) {
+    parameters.push(['tags', tags])
+  }
+
+  const query = parameters
+    .map(([key, value]) => `${key}=${encodeURIComponent(value)}`)
+    .join('&')
+
+  return `anki://x-callback-url/addnote?${query}`
 }
 
 function highlightSearchText(value: string, searchText: string) {
@@ -642,6 +698,31 @@ function App() {
     })
   }
 
+  function updateManualTranslation(
+    targetWord: string,
+    field: 'meaning' | 'explanation',
+    value: string,
+  ) {
+    const translationKey = getTranslationKey(targetWord)
+
+    setTranslations((currentTranslations) => {
+      const currentTranslation = currentTranslations[translationKey]
+
+      return {
+        ...currentTranslations,
+        [translationKey]: {
+          meaning: currentTranslation?.meaning || '',
+          explanation: currentTranslation?.explanation || '',
+          languageStyle: currentTranslation?.languageStyle || 'simple',
+          suggestedTags: currentTranslation?.suggestedTags || [],
+          [field]: value,
+        },
+      }
+    })
+    setTranslationError('')
+    setCardError('')
+  }
+
   function addSuggestedTag(targetWord: string, tagToAdd: string) {
     const cleanedTag = tagToAdd.trim().toLowerCase()
     const translationKey = getTranslationKey(targetWord)
@@ -897,6 +978,51 @@ function App() {
     } finally {
       setIsGenerating(false)
     }
+  }
+
+  function sendCurrentCardToAnkiMobile() {
+    const cleanedSentence = sentence.trim()
+    const cleanedTargetWords = selectedWords
+      .map((word) => word.trim())
+      .filter(Boolean)
+
+    if (!cleanedSentence) {
+      setCardError('Der Satz darf nicht leer sein.')
+      return
+    }
+
+    if (cleanedTargetWords.length !== 1) {
+      setCardError(
+        'Bitte wähle für die direkte AnkiMobile-Übergabe genau ein Zielwort oder eine Phrase aus.',
+      )
+      return
+    }
+
+    const targetWord = cleanedTargetWords[0]
+    const translation = translations[getTranslationKey(targetWord)]
+
+    if (!translation?.meaning) {
+      setCardError(
+        'Bitte zuerst eine Bedeutung für das ausgewählte Wort oder die Phrase generieren.',
+      )
+      return
+    }
+
+    const cardForAnki: SavedCard = {
+      id: `anki-${Date.now()}`,
+      sentence: cleanedSentence,
+      targetWord,
+      meaning: translation.meaning,
+      explanation: translation.explanation,
+      languageStyle: translation.languageStyle || 'simple',
+      source: sessionSource.trim() || 'Kindle',
+      tags: translation.suggestedTags.join(' '),
+      createdAt: new Date().toISOString(),
+      exportedAt: null,
+    }
+
+    setCardError('')
+    window.location.href = buildAnkiMobileAddNoteUrl(cardForAnki)
   }
 
   function saveCard() {
@@ -1401,31 +1527,54 @@ function App() {
         </section>
 
         <section className="result-panel" aria-label="Translation result">
-          <p className="panel-label">KI-Ergebnis</p>
-          {Object.keys(translations).length > 0 ? (
+          <p className="panel-label">KI-Ergebnis / Manuell</p>
+          {selectedWords.length > 0 ? (
             <div className="result-content">
               {selectedWords.map((targetWord) => {
-                const translation = translations[getTranslationKey(targetWord)]
-
-                if (!translation) {
-                  return null
-                }
+                const translationKey = getTranslationKey(targetWord)
+                const translation = translations[translationKey]
 
                 return (
                   <div key={targetWord}>
                     <p className="result-meaning">{targetWord}</p>
-                    <p className="result-explanation">{translation.meaning}</p>
-                    <p className="result-explanation">
-                      {translation.explanation}
-                    </p>
-                    {translation.languageStyle ? (
+                    <label className="metadata-label">
+                      Bedeutung
+                      <textarea
+                        value={translation?.meaning || ''}
+                        onChange={(event) =>
+                          updateManualTranslation(
+                            targetWord,
+                            'meaning',
+                            event.target.value,
+                          )
+                        }
+                        placeholder="Bedeutung manuell eingeben"
+                        rows={2}
+                      />
+                    </label>
+                    <label className="metadata-label">
+                      Erklärung (optional)
+                      <textarea
+                        value={translation?.explanation || ''}
+                        onChange={(event) =>
+                          updateManualTranslation(
+                            targetWord,
+                            'explanation',
+                            event.target.value,
+                          )
+                        }
+                        placeholder="Zusätzliche Erklärung oder Beispiel"
+                        rows={3}
+                      />
+                    </label>
+                    {translation?.languageStyle ? (
                       <p className="result-style">
                         Style: {translation.languageStyle}
                       </p>
                     ) : null}
                     <div className="tag-editor">
                       <p className="result-style">Tags</p>
-                      {translation.suggestedTags.length > 0 ? (
+                      {translation?.suggestedTags.length ? (
                         <div
                           className="tag-chip-row"
                           aria-label="Suggested tags"
@@ -1443,16 +1592,15 @@ function App() {
                           ))}
                         </div>
                       ) : (
-                        <p className="empty-state">No tags suggested yet.</p>
+                        <p className="empty-state">No tags added yet.</p>
                       )}
                       <div className="tag-add-row">
                         <select
-                          value={tagDrafts[getTranslationKey(targetWord)] || ''}
+                          value={tagDrafts[translationKey] || ''}
                           onChange={(event) =>
                             setTagDrafts((currentDrafts) => ({
                               ...currentDrafts,
-                              [getTranslationKey(targetWord)]:
-                                event.target.value,
+                              [translationKey]: event.target.value,
                             }))
                           }
                         >
@@ -1465,12 +1613,15 @@ function App() {
                         </select>
                         <button
                           type="button"
-                          onClick={() =>
+                          onClick={() => {
+                            if (!translation) {
+                              updateManualTranslation(targetWord, 'meaning', '')
+                            }
                             addSuggestedTag(
                               targetWord,
-                              tagDrafts[getTranslationKey(targetWord)] || '',
+                              tagDrafts[translationKey] || '',
                             )
-                          }
+                          }}
                         >
                           Add
                         </button>
@@ -1481,11 +1632,13 @@ function App() {
               })}
             </div>
           ) : (
-            <p className="empty-state">Noch keine Bedeutung generiert.</p>
+            <p className="empty-state">
+              Wähle zuerst ein Wort oder eine Phrase aus.
+            </p>
           )}
         </section>
 
-        <section className="selected-panel" aria-label="Save card">
+        <section className="selected-panel" aria-label="Send or save card">
           <p className="panel-label">Karte</p>
           <label className="metadata-label" htmlFor="source-input">
             Source / Book
@@ -1499,10 +1652,18 @@ function App() {
           <button
             className="save-button"
             type="button"
+            onClick={sendCurrentCardToAnkiMobile}
+            disabled={isGenerating}
+          >
+            Send to AnkiMobile
+          </button>
+          <button
+            className="export-button"
+            type="button"
             onClick={saveCard}
             disabled={isGenerating}
           >
-            Karte speichern
+            Nur lokal speichern
           </button>
           {cardError ? (
             <p className="error-message" role="alert">

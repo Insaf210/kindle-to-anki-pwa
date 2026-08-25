@@ -343,7 +343,8 @@
 }
 
 .metadata-label input,
-.metadata-label select {
+.metadata-label select,
+.metadata-label textarea {
   width: 100%;
   min-height: 44px;
   padding: 0 13px;
@@ -359,7 +360,8 @@
 }
 
 .metadata-label input:focus,
-.metadata-label select:focus {
+.metadata-label select:focus,
+.metadata-label textarea:focus {
   border-color: #2563eb;
   outline: none;
   box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.12);
