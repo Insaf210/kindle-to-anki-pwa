@@ -280,6 +280,121 @@ function isValidBackupCard(card: unknown): card is SavedCard {
   )
 }
 
+function getSearchableCardValues(card: SavedCard, searchMode: CardSearchMode) {
+  if (searchMode === 'target') {
+    return [card.targetWord]
+  }
+
+  return [
+    card.sentence,
+    card.targetWord,
+    card.meaning || '',
+    card.explanation || '',
+    card.source || '',
+    card.tags || '',
+    card.languageStyle || '',
+  ]
+}
+
+function cardMatchesStatus(card: SavedCard, statusFilter: CardStatusFilter) {
+  return (
+    statusFilter === 'all' ||
+    (statusFilter === 'new' && !card.exportedAt) ||
+    (statusFilter === 'exported' && Boolean(card.exportedAt))
+  )
+}
+
+function filterAndSortCards(
+  cards: SavedCard[],
+  searchText: string,
+  searchMode: CardSearchMode,
+  statusFilter: CardStatusFilter,
+) {
+  const normalizedSearch = normalizeValue(searchText)
+
+  return cards
+    .filter((card) => {
+      const matchesSearch =
+        !normalizedSearch ||
+        getSearchableCardValues(card, searchMode).some((value) =>
+          normalizeValue(value).includes(normalizedSearch),
+        )
+
+      return matchesSearch && cardMatchesStatus(card, statusFilter)
+    })
+    .sort((firstCard, secondCard) => {
+      if (!normalizedSearch) {
+        return 0
+      }
+
+      const firstTargetMatches = normalizeValue(firstCard.targetWord).includes(
+        normalizedSearch,
+      )
+      const secondTargetMatches = normalizeValue(secondCard.targetWord).includes(
+        normalizedSearch,
+      )
+
+      return Number(secondTargetMatches) - Number(firstTargetMatches)
+    })
+}
+
+function getCardsForCsvExport(
+  cards: SavedCard[],
+  exportMode: CsvExportMode,
+  selectedCardIds: string[],
+) {
+  if (exportMode === 'new') {
+    return cards.filter((card) => card.exportedAt === null)
+  }
+
+  if (exportMode === 'selected') {
+    return cards.filter((card) => selectedCardIds.includes(card.id))
+  }
+
+  return cards
+}
+
+function getCsvExportEmptyMessage(exportMode: CsvExportMode) {
+  if (exportMode === 'new') {
+    return 'Keine neuen Karten zum Exportieren.'
+  }
+
+  if (exportMode === 'selected') {
+    return 'Please select at least one card to export.'
+  }
+
+  return 'Keine Karten zum Exportieren.'
+}
+
+function buildCsvContent(cardsToExport: SavedCard[]) {
+  const csvHeader = [
+    'CardId',
+    'Sentence',
+    'Target',
+    'Meaning',
+    'Explanation',
+    'Source',
+    'Tags',
+    'LanguageStyle',
+  ]
+  const csvRows = cardsToExport.map((card) =>
+    [
+      card.id,
+      highlightTargetWord(card.sentence, card.targetWord),
+      card.targetWord,
+      card.meaning || '',
+      card.explanation || '',
+      card.source || 'Kindle',
+      card.tags || '',
+      card.languageStyle || '',
+    ]
+      .map(escapeCsvValue)
+      .join(','),
+  )
+
+  return [csvHeader.map(escapeCsvValue).join(','), ...csvRows].join('\r\n')
+}
+
 function App() {
   const backupInputRef = useRef<HTMLInputElement>(null)
   const lastClipboardPromptRef = useRef('')
@@ -320,47 +435,12 @@ function App() {
   const words = sentence.trim().split(/\s+/).filter(Boolean)
   const isMultiSentenceFlow = sentences.length > 1
   const hasNextSentence = currentSentenceIndex < sentences.length - 1
-  const normalizedCardSearch = normalizeValue(cardSearch)
-  const filteredCards = cards
-    .filter((card) => {
-      const searchableValues =
-        cardSearchMode === 'target'
-          ? [card.targetWord]
-          : [
-              card.sentence,
-              card.targetWord,
-              card.meaning || '',
-              card.explanation || '',
-              card.source || '',
-              card.tags || '',
-              card.languageStyle || '',
-            ]
-      const matchesSearch =
-        !normalizedCardSearch ||
-        searchableValues.some((value) =>
-          normalizeValue(value).includes(normalizedCardSearch),
-        )
-      const matchesStatus =
-        cardStatusFilter === 'all' ||
-        (cardStatusFilter === 'new' && !card.exportedAt) ||
-        (cardStatusFilter === 'exported' && Boolean(card.exportedAt))
-
-      return matchesSearch && matchesStatus
-    })
-    .sort((firstCard, secondCard) => {
-      if (!normalizedCardSearch) {
-        return 0
-      }
-
-      const firstTargetMatches = normalizeValue(firstCard.targetWord).includes(
-        normalizedCardSearch,
-      )
-      const secondTargetMatches = normalizeValue(secondCard.targetWord).includes(
-        normalizedCardSearch,
-      )
-
-      return Number(secondTargetMatches) - Number(firstTargetMatches)
-    })
+  const filteredCards = filterAndSortCards(
+    cards,
+    cardSearch,
+    cardSearchMode,
+    cardStatusFilter,
+  )
   const backupIsRecent =
     Boolean(lastBackupExportAt) &&
     Date.now() - new Date(lastBackupExportAt).getTime() <
@@ -787,9 +867,6 @@ function App() {
               ? suggestedTags
               : inferSuggestedTags(targetWord, cleanedSentence)
 
-          console.log('AI response:', data)
-          console.log('Parsed suggestedTags:', parsedSuggestedTags)
-
           nextTranslations[getTranslationKey(targetWord)] = {
             meaning: data.meaning,
             explanation: data.explanation,
@@ -917,54 +994,20 @@ function App() {
   }
 
   function exportCardsAsCsv(exportMode: CsvExportMode) {
-    const cardsToExport =
-      exportMode === 'new'
-        ? cards.filter((card) => card.exportedAt === null)
-        : exportMode === 'selected'
-          ? cards.filter((card) => selectedCardIds.includes(card.id))
-        : cards
+    const cardsToExport = getCardsForCsvExport(
+      cards,
+      exportMode,
+      selectedCardIds,
+    )
 
     setExportError('')
 
     if (cardsToExport.length === 0) {
-      setExportError(
-        exportMode === 'new'
-          ? 'Keine neuen Karten zum Exportieren.'
-          : exportMode === 'selected'
-            ? 'Please select at least one card to export.'
-          : 'Keine Karten zum Exportieren.',
-      )
+      setExportError(getCsvExportEmptyMessage(exportMode))
       return
     }
 
-    const csvHeader = [
-      'CardId',
-      'Sentence',
-      'Target',
-      'Meaning',
-      'Explanation',
-      'Source',
-      'Tags',
-      'LanguageStyle',
-    ]
-    const csvRows = cardsToExport.map((card) =>
-      [
-        card.id,
-        highlightTargetWord(card.sentence, card.targetWord),
-        card.targetWord,
-        card.meaning || '',
-        card.explanation || '',
-        card.source || 'Kindle',
-        card.tags || '',
-        card.languageStyle || '',
-      ]
-        .map(escapeCsvValue)
-        .join(','),
-    )
-    const csvContent = [
-      csvHeader.map(escapeCsvValue).join(','),
-      ...csvRows,
-    ].join('\r\n')
+    const csvContent = buildCsvContent(cardsToExport)
     const today = new Date().toISOString().slice(0, 10)
     const blob = new Blob([csvContent], {
       type: 'text/csv;charset=utf-8',
