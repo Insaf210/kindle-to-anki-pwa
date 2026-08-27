@@ -77,6 +77,12 @@ type TranslationResult = {
   explanation: string
   languageStyle?: string
   suggestedTags: string[]
+  provider?: 'ai' | 'translator'
+}
+
+type TranslationManualEdits = {
+  meaning: boolean
+  explanation: boolean
 }
 
 type CardStatusFilter = 'all' | 'new' | 'exported'
@@ -102,6 +108,22 @@ function normalizeValue(value: string) {
 
 function getTranslationKey(targetWord: string) {
   return normalizeValue(targetWord)
+}
+
+function mergeGeneratedTranslation(
+  currentTranslation: TranslationResult | undefined,
+  generatedTranslation: TranslationResult,
+  manualEdits: TranslationManualEdits | undefined,
+) {
+  return {
+    ...generatedTranslation,
+    meaning: manualEdits?.meaning
+      ? currentTranslation?.meaning || ''
+      : generatedTranslation.meaning,
+    explanation: manualEdits?.explanation
+      ? currentTranslation?.explanation || ''
+      : generatedTranslation.explanation,
+  }
 }
 
 function normalizeTags(value: string) {
@@ -473,6 +495,10 @@ function App() {
   const [translations, setTranslations] = useState<
     Record<string, TranslationResult>
   >({})
+  const [translationManualEdits, setTranslationManualEdits] = useState<
+    Record<string, TranslationManualEdits>
+  >({})
+  const [translationNotice, setTranslationNotice] = useState('')
   const [cards, setCards] = useState<SavedCard[]>([])
   const [cardsLoaded, setCardsLoaded] = useState(false)
   const [isCardsExpanded, setIsCardsExpanded] = useState(false)
@@ -573,8 +599,10 @@ function App() {
     setExportError('')
     setBackupError('')
     setTranslationError('')
+    setTranslationNotice('')
     setPhraseSuggestions([])
     setTranslations({})
+    setTranslationManualEdits({})
   }
 
   function updateSentence(nextSentence: string) {
@@ -663,9 +691,11 @@ function App() {
     setExportError('')
     setBackupError('')
     setTranslationError('')
+    setTranslationNotice('')
     setSpeechError('')
     setPhraseSuggestions([])
     setTranslations({})
+    setTranslationManualEdits({})
   }
 
   function addSuggestedPhrase(phrase: string) {
@@ -674,7 +704,9 @@ function App() {
     )
     setCardError('')
     setTranslationError('')
+    setTranslationNotice('')
     setTranslations({})
+    setTranslationManualEdits({})
   }
 
   function removeSuggestedTag(targetWord: string, tagToRemove: string) {
@@ -715,10 +747,19 @@ function App() {
           explanation: currentTranslation?.explanation || '',
           languageStyle: currentTranslation?.languageStyle || 'simple',
           suggestedTags: currentTranslation?.suggestedTags || [],
+          provider: currentTranslation?.provider,
           [field]: value,
         },
       }
     })
+    setTranslationManualEdits((currentEdits) => ({
+      ...currentEdits,
+      [translationKey]: {
+        meaning: currentEdits[translationKey]?.meaning || field === 'meaning',
+        explanation:
+          currentEdits[translationKey]?.explanation || field === 'explanation',
+      },
+    }))
     setTranslationError('')
     setCardError('')
   }
@@ -864,7 +905,9 @@ function App() {
     setSelectedWords([phrase])
     setCardError('')
     setTranslationError('')
+    setTranslationNotice('')
     setTranslations({})
+    setTranslationManualEdits({})
   }
 
   async function pasteFromClipboard() {
@@ -885,31 +928,29 @@ function App() {
     }
   }
 
-  async function generateMeaning() {
+  async function prepareMeaning(mode: 'ai-first' | 'translator-only') {
     const cleanedSentence = sentence.trim()
     const cleanedTargetWords = selectedWords
       .map((word) => word.trim())
       .filter(Boolean)
 
     setTranslationError('')
+    setTranslationNotice('')
     setCardError('')
 
     if (!cleanedSentence) {
-      setTranslations({})
       setTranslationError('Der Satz darf nicht leer sein.')
       return
     }
 
     if (cleanedTargetWords.length === 0) {
-      setTranslations({})
       setTranslationError('Bitte w\u00e4hle mindestens ein Zielwort aus.')
       return
     }
 
     if ('onLine' in navigator && !navigator.onLine) {
-      setTranslations({})
       setTranslationError(
-        'AI service could not be reached. Check your connection and try again.',
+        'Automatische Aufbereitung ist offline nicht verfügbar. Du kannst Bedeutung und Erklärung weiterhin manuell eingeben.',
       )
       return
     }
@@ -921,9 +962,13 @@ function App() {
         ...translations,
       }
       const failedWords: string[] = []
-      let serviceCouldNotBeReached = false
+      let translatorWasUsed = false
 
       for (const targetWord of cleanedTargetWords) {
+        const translationKey = getTranslationKey(targetWord)
+        const currentTranslation = nextTranslations[translationKey]
+        const currentManualEdits = translationManualEdits[translationKey]
+
         try {
           const response = await fetch(translationApiUrl, {
             method: 'POST',
@@ -931,6 +976,7 @@ function App() {
               'Content-Type': 'application/json',
             },
             body: JSON.stringify({
+              action: mode === 'translator-only' ? 'translator' : 'translate',
               sentence: cleanedSentence,
               targetWord,
             }),
@@ -938,46 +984,75 @@ function App() {
 
           const data = await response.json()
 
-          if (!response.ok) {
+          if (!response.ok || typeof data.meaning !== 'string') {
             failedWords.push(targetWord)
             continue
           }
+
+          const provider: TranslationResult['provider'] =
+            data.provider === 'translator' ? 'translator' : 'ai'
+          translatorWasUsed ||= provider === 'translator'
+
           const suggestedTags = cleanSuggestedTags(data.suggestedTags)
           const parsedSuggestedTags =
             suggestedTags.length > 0
               ? suggestedTags
-              : inferSuggestedTags(targetWord, cleanedSentence)
-
-          nextTranslations[getTranslationKey(targetWord)] = {
+              : currentTranslation?.suggestedTags.length
+                ? currentTranslation.suggestedTags
+                : inferSuggestedTags(targetWord, cleanedSentence)
+          const languageStyle =
+            provider === 'translator' && currentTranslation?.languageStyle
+              ? currentTranslation.languageStyle
+              : cleanLanguageStyle(
+                  data.languageStyle,
+                  targetWord,
+                  cleanedSentence,
+                )
+          const generatedTranslation: TranslationResult = {
             meaning: data.meaning,
-            explanation: data.explanation,
-            languageStyle: cleanLanguageStyle(
-              data.languageStyle,
-              targetWord,
-              cleanedSentence,
-            ),
+            explanation:
+              typeof data.explanation === 'string' ? data.explanation : '',
+            languageStyle,
             suggestedTags: parsedSuggestedTags,
+            provider,
           }
+
+          nextTranslations[translationKey] = mergeGeneratedTranslation(
+            currentTranslation,
+            generatedTranslation,
+            currentManualEdits,
+          )
         } catch {
-          serviceCouldNotBeReached = true
           failedWords.push(targetWord)
         }
       }
 
       setTranslations(nextTranslations)
 
-      if (serviceCouldNotBeReached) {
+      if (failedWords.length > 0) {
         setTranslationError(
-          'AI service could not be reached. Check your connection and try again.',
+          `Automatische Aufbereitung ist fehlgeschlagen für: ${failedWords.join(', ')}. Du kannst Bedeutung und Erklärung weiterhin manuell eingeben.`,
         )
-      } else if (failedWords.length > 0) {
-        setTranslationError(
-          `Keine Bedeutung generiert f\u00fcr: ${failedWords.join(', ')}`,
+      }
+
+      if (translatorWasUsed) {
+        setTranslationNotice(
+          mode === 'translator-only'
+            ? 'Translator wurde verwendet.'
+            : 'KI nicht verfügbar. Translator-Fallback wurde verwendet.',
         )
       }
     } finally {
       setIsGenerating(false)
     }
+  }
+
+  async function generateMeaning() {
+    await prepareMeaning('ai-first')
+  }
+
+  async function useTranslator() {
+    await prepareMeaning('translator-only')
   }
 
   function sendCurrentCardToAnkiMobile() {
@@ -1504,6 +1579,16 @@ function App() {
                   : 'Generate all'}
             </button>
           ) : null}
+          {selectedWords.length > 0 ? (
+            <button
+              className="export-button"
+              type="button"
+              onClick={useTranslator}
+              disabled={isGenerating}
+            >
+              Translator verwenden
+            </button>
+          ) : null}
           {selectedWords.length >= 2 ? (
             <button
               className="export-button"
@@ -1517,6 +1602,11 @@ function App() {
           {translationError ? (
             <p className="error-message" role="alert">
               {translationError}
+            </p>
+          ) : null}
+          {translationNotice ? (
+            <p className="empty-state" role="status">
+              {translationNotice}
             </p>
           ) : null}
           {speechError ? (
