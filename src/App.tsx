@@ -213,7 +213,10 @@ function highlightTargetWordForAnki(sentence: string, targetWord: string) {
   return `${textToHtml(beforeMatch)}<b>${textToHtml(matchedText)}</b>${textToHtml(afterMatch)}`
 }
 
-function buildAnkiMobileAddNoteUrl(card: SavedCard) {
+function buildAnkiMobileAddNoteUrl(
+  card: SavedCard,
+  successCallbackUrl: string,
+) {
   const front = highlightTargetWordForAnki(card.sentence, card.targetWord)
   const backParts = [
     `<b>${textToHtml(card.targetWord)}</b>`,
@@ -226,6 +229,7 @@ function buildAnkiMobileAddNoteUrl(card: SavedCard) {
     ['deck', ankiMobileDeckName],
     ['fldFront', front],
     ['fldBack', back],
+    ['x-success', successCallbackUrl],
   ]
   const tags = normalizeTags(card.tags || '')
 
@@ -476,6 +480,7 @@ function buildCsvContent(cardsToExport: SavedCard[]) {
 function App() {
   const backupInputRef = useRef<HTMLInputElement>(null)
   const lastClipboardPromptRef = useRef('')
+  const isSendingToAnkiRef = useRef(false)
   const [sentence, setSentence] = useState(initialSentence)
   const [sessionSource, setSessionSource] = useState('Kindle')
   const [tagDrafts, setTagDrafts] = useState<Record<string, string>>({})
@@ -499,6 +504,8 @@ function App() {
     Record<string, TranslationManualEdits>
   >({})
   const [translationNotice, setTranslationNotice] = useState('')
+  const [ankiNotice, setAnkiNotice] = useState('')
+  const [isSendingToAnki, setIsSendingToAnki] = useState(false)
   const [cards, setCards] = useState<SavedCard[]>([])
   const [cardsLoaded, setCardsLoaded] = useState(false)
   const [isCardsExpanded, setIsCardsExpanded] = useState(false)
@@ -604,6 +611,61 @@ function App() {
     setTranslations({})
     setTranslationManualEdits({})
   }
+
+  useEffect(() => {
+    const currentUrl = new URL(window.location.href)
+
+    if (currentUrl.searchParams.get('ankiResult') !== 'success') {
+      return
+    }
+
+    currentUrl.searchParams.delete('ankiResult')
+    window.history.replaceState(null, '', currentUrl.toString())
+
+    setSentences([])
+    setCurrentSentenceIndex(0)
+    setTagDrafts({})
+    resetSentenceWork('')
+    setAnkiNotice('Karte zu Anki hinzugefügt.')
+    isSendingToAnkiRef.current = false
+    setIsSendingToAnki(false)
+  }, [])
+
+  useEffect(() => {
+    function handleVisibilityChange() {
+      if (
+        document.visibilityState !== 'visible' ||
+        !isSendingToAnkiRef.current
+      ) {
+        return
+      }
+
+      isSendingToAnkiRef.current = false
+      setIsSendingToAnki(false)
+      setAnkiNotice(
+        'Übergabe nicht bestätigt. Deine Kartendaten bleiben erhalten; du kannst erneut senden.',
+      )
+    }
+
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!ankiNotice) {
+      return
+    }
+
+    const timeoutMs = ankiNotice.startsWith('Karte zu Anki') ? 3000 : 5000
+    const timeoutId = window.setTimeout(() => {
+      setAnkiNotice('')
+    }, timeoutMs)
+
+    return () => window.clearTimeout(timeoutId)
+  }, [ankiNotice])
 
   function updateSentence(nextSentence: string) {
     setSentences([])
@@ -1056,6 +1118,10 @@ function App() {
   }
 
   function sendCurrentCardToAnkiMobile() {
+    if (isSendingToAnkiRef.current) {
+      return
+    }
+
     const cleanedSentence = sentence.trim()
     const cleanedTargetWords = selectedWords
       .map((word) => word.trim())
@@ -1097,7 +1163,17 @@ function App() {
     }
 
     setCardError('')
-    window.location.href = buildAnkiMobileAddNoteUrl(cardForAnki)
+    setAnkiNotice('')
+    isSendingToAnkiRef.current = true
+    setIsSendingToAnki(true)
+
+    const successCallbackUrl = new URL(window.location.href)
+    successCallbackUrl.searchParams.set('ankiResult', 'success')
+
+    window.location.href = buildAnkiMobileAddNoteUrl(
+      cardForAnki,
+      successCallbackUrl.toString(),
+    )
   }
 
   function saveCard() {
@@ -1743,9 +1819,9 @@ function App() {
             className="save-button"
             type="button"
             onClick={sendCurrentCardToAnkiMobile}
-            disabled={isGenerating}
+            disabled={isGenerating || isSendingToAnki}
           >
-            Send to AnkiMobile
+            {isSendingToAnki ? 'Öffne AnkiMobile …' : 'Send to AnkiMobile'}
           </button>
           <button
             className="export-button"
@@ -1758,6 +1834,31 @@ function App() {
           {cardError ? (
             <p className="error-message" role="alert">
               {cardError}
+            </p>
+          ) : null}
+          {ankiNotice ? (
+            <p
+              role="status"
+              aria-live="polite"
+              style={{
+                position: 'fixed',
+                top: 'calc(env(safe-area-inset-top, 0px) + 12px)',
+                left: '50%',
+                zIndex: 9999,
+                width: 'max-content',
+                maxWidth: 'calc(100vw - 32px)',
+                margin: 0,
+                padding: '10px 14px',
+                transform: 'translateX(-50%)',
+                borderRadius: '14px',
+                background: '#111827',
+                color: '#ffffff',
+                boxShadow: '0 8px 24px rgba(0, 0, 0, 0.22)',
+                fontWeight: 700,
+                textAlign: 'center',
+              }}
+            >
+              {ankiNotice}
             </p>
           ) : null}
         </section>
