@@ -1,7 +1,8 @@
 import { useRef, useEffect, useState } from 'react'
 import './App.css'
 
-const initialSentence = 'This is an example sentence.'
+const initialSentence = ''
+const consumedClipboardStorageKey = 'send-to-anki-consumed-clipboard'
 const cardsStorageKey = 'send-to-anki-cards'
 const lastBackupStorageKey = 'send-to-anki-last-backup-at'
 const translationApiUrl = 'https://kindle-to-anki-api.insafhamzu24.workers.dev/'
@@ -479,7 +480,10 @@ function buildCsvContent(cardsToExport: SavedCard[]) {
 
 function App() {
   const backupInputRef = useRef<HTMLInputElement>(null)
-  const lastClipboardPromptRef = useRef('')
+  const sentenceRef = useRef(initialSentence)
+  const manualSentenceControlRef = useRef(false)
+  const lastConsumedClipboardRef = useRef('')
+  const clipboardReadInProgressRef = useRef(false)
   const isSendingToAnkiRef = useRef(false)
   const [sentence, setSentence] = useState(initialSentence)
   const [sessionSource, setSessionSource] = useState('Kindle')
@@ -599,6 +603,7 @@ function App() {
   }, [])
 
   function resetSentenceWork(nextSentence: string) {
+    sentenceRef.current = nextSentence
     setSentence(nextSentence)
     setSelectedWords([])
     setClipboardError('')
@@ -625,6 +630,7 @@ function App() {
     setSentences([])
     setCurrentSentenceIndex(0)
     setTagDrafts({})
+    manualSentenceControlRef.current = false
     resetSentenceWork('')
     setAnkiNotice('Karte zu Anki hinzugefügt.')
     isSendingToAnkiRef.current = false
@@ -667,16 +673,52 @@ function App() {
     return () => window.clearTimeout(timeoutId)
   }, [ankiNotice])
 
+  function getLastConsumedClipboard() {
+    if (lastConsumedClipboardRef.current) {
+      return lastConsumedClipboardRef.current
+    }
+
+    try {
+      const storedClipboard =
+        window.sessionStorage.getItem(consumedClipboardStorageKey) || ''
+      lastConsumedClipboardRef.current = storedClipboard
+      return storedClipboard
+    } catch {
+      return ''
+    }
+  }
+
+  function rememberConsumedClipboard(value: string) {
+    const cleanedValue = value.trim()
+
+    if (!cleanedValue) {
+      return
+    }
+
+    lastConsumedClipboardRef.current = cleanedValue
+
+    try {
+      window.sessionStorage.setItem(consumedClipboardStorageKey, cleanedValue)
+    } catch {
+      // The in-memory ref still protects the current page lifecycle.
+    }
+  }
+
   function updateSentence(nextSentence: string) {
     setSentences([])
     setCurrentSentenceIndex(0)
     resetSentenceWork(nextSentence)
   }
 
+  function handleSentenceChange(nextSentence: string) {
+    manualSentenceControlRef.current = true
+    updateSentence(nextSentence)
+  }
+
   function applyPastedText(nextSentence: string) {
     const pastedSentences = splitTextIntoSentences(nextSentence)
 
-    lastClipboardPromptRef.current = nextSentence
+    rememberConsumedClipboard(nextSentence)
 
     if (pastedSentences.length > 1) {
       setSentences(pastedSentences)
@@ -689,24 +731,41 @@ function App() {
   }
 
   useEffect(() => {
+    let isDisposed = false
+
     async function detectClipboardText() {
-      if (!navigator.clipboard?.readText) {
+      if (
+        !navigator.clipboard?.readText ||
+        sentenceRef.current.trim() ||
+        manualSentenceControlRef.current ||
+        clipboardReadInProgressRef.current
+      ) {
         return
       }
 
+      clipboardReadInProgressRef.current = true
+
       try {
         const clipboardText = (await navigator.clipboard.readText()).trim()
-        const currentSentence = sentence.trim()
+
+        if (
+          isDisposed ||
+          sentenceRef.current.trim() ||
+          manualSentenceControlRef.current
+        ) {
+          return
+        }
 
         if (
           clipboardText &&
-          clipboardText !== currentSentence &&
-          clipboardText !== lastClipboardPromptRef.current
+          clipboardText !== getLastConsumedClipboard()
         ) {
           applyPastedText(clipboardText)
         }
       } catch {
         // Some browsers only allow clipboard reads after user interaction.
+      } finally {
+        clipboardReadInProgressRef.current = false
       }
     }
 
@@ -722,10 +781,17 @@ function App() {
     window.addEventListener('focus', detectClipboardText)
 
     return () => {
+      isDisposed = true
       document.removeEventListener('visibilitychange', handleAppActive)
       window.removeEventListener('focus', detectClipboardText)
     }
-  }, [sentence])
+  }, [])
+
+  function handleSentencePaste(
+    event: React.ClipboardEvent<HTMLTextAreaElement>,
+  ) {
+    rememberConsumedClipboard(event.clipboardData.getData('text'))
+  }
 
   function moveToSentence(nextIndex: number) {
     if (nextIndex >= sentences.length) {
@@ -975,6 +1041,13 @@ function App() {
   async function pasteFromClipboard() {
     setClipboardError('')
 
+    if (!navigator.clipboard?.readText) {
+      setClipboardError(
+        'Zwischenablage konnte nicht gelesen werden. Du kannst den Satz weiterhin einfügen oder eingeben.',
+      )
+      return
+    }
+
     try {
       const clipboardText = await navigator.clipboard.readText()
       const nextSentence = clipboardText.trim()
@@ -986,7 +1059,9 @@ function App() {
 
       applyPastedText(nextSentence)
     } catch {
-      setClipboardError('Zwischenablage konnte nicht gelesen werden.')
+      setClipboardError(
+        'Zwischenablage konnte nicht gelesen werden. Du kannst den Satz weiterhin einfügen oder eingeben.',
+      )
     }
   }
 
@@ -1523,7 +1598,9 @@ function App() {
             className="sentence-input"
             id="sentence-input"
             value={sentence}
-            onChange={(event) => updateSentence(event.target.value)}
+            onChange={(event) => handleSentenceChange(event.target.value)}
+            onPaste={handleSentencePaste}
+            placeholder="Satz eingeben oder aus Zwischenablage übernehmen"
             rows={5}
           />
           <button
