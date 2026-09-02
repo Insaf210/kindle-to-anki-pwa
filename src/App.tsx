@@ -5,7 +5,7 @@ const initialSentence = ''
 const consumedClipboardStorageKey = 'send-to-anki-consumed-clipboard'
 const cardsStorageKey = 'send-to-anki-cards'
 const lastBackupStorageKey = 'send-to-anki-last-backup-at'
-const translationApiUrl = 'https://kindle-to-anki-api.insafhamzu24.workers.dev/'
+const translationApiUrl = 'https://kindle-to-anki-worker.insafhamzu24.workers.dev/'
 const ankiMobileDeckName = 'English Vocab'
 const ankiMobileNoteType = 'com.example.kindle_to_anki.basic'
 const backupReminderCardCount = 50
@@ -36,27 +36,32 @@ const allowedLanguageStyles = [
   'literary',
   'advanced',
 ]
-const allowedSuggestedTags = [
-  'verb',
+const allowedPartsOfSpeech = [
   'noun',
+  'proper-noun',
+  'verb',
   'adjective',
   'adverb',
-  'idiom',
+  'pronoun',
+  'determiner',
+  'preposition',
+  'coordinating-conjunction',
+  'subordinating-conjunction',
+  'auxiliary',
+  'particle',
+  'interjection',
+  'numeral',
+]
+const allowedExpressionTypes = [
   'phrasal-verb',
+  'idiom',
   'collocation',
   'compound-noun',
-  'formal',
-  'informal',
-  'slang',
-  'business',
-  'academic',
-  'literary',
-  'advanced',
-  'everyday',
-  'emotion',
-  'action',
-  'abstract',
-  'concrete',
+  'fixed-expression',
+]
+const allowedSuggestedTags = [
+  ...allowedPartsOfSpeech,
+  ...allowedExpressionTypes,
 ]
 const allowedSuggestedTagSet = new Set(allowedSuggestedTags)
 
@@ -146,35 +151,6 @@ function cleanSuggestedTags(value: unknown) {
     .filter((tag) => allowedSuggestedTagSet.has(tag))
 
   return Array.from(new Set(cleanedTags)).slice(0, 4)
-}
-
-function inferSuggestedTags(targetWord: string, sentence: string) {
-  const normalizedText = normalizeValue(`${targetWord} ${sentence}`)
-  const tags: string[] = []
-
-  if (/\b(gave up|give up|looked forward to|look forward to|turned out|turn out|ran into|run into)\b/.test(normalizedText)) {
-    tags.push('phrasal-verb', 'verb')
-  } else if (targetWord.includes(' ')) {
-    tags.push('collocation')
-  }
-
-  if (/\b(methodology|research|academic|analysis|hypothesis)\b/.test(normalizedText)) {
-    tags.push('academic', 'abstract')
-  }
-
-  if (/\b(sustainable growth|market|company|business|revenue|strategy)\b/.test(normalizedText)) {
-    tags.push('business', 'collocation')
-  }
-
-  if (/\b(gave up|give up|overcame|run|ran|turn|turned|look|looked)\b/.test(normalizedText)) {
-    tags.push('action')
-  }
-
-  if (tags.length === 0) {
-    tags.push('everyday')
-  }
-
-  return Array.from(new Set(tags)).slice(0, 4)
 }
 
 function escapeCsvValue(value: string | number | null | undefined) {
@@ -1132,11 +1108,9 @@ function App() {
 
           const suggestedTags = cleanSuggestedTags(data.suggestedTags)
           const parsedSuggestedTags =
-            suggestedTags.length > 0
-              ? suggestedTags
-              : currentTranslation?.suggestedTags.length
-                ? currentTranslation.suggestedTags
-                : inferSuggestedTags(targetWord, cleanedSentence)
+            provider === 'translator' && currentTranslation?.suggestedTags.length
+              ? currentTranslation.suggestedTags
+              : suggestedTags
           const languageStyle =
             provider === 'translator' && currentTranslation?.languageStyle
               ? currentTranslation.languageStyle
@@ -2281,6 +2255,16 @@ function App() {
             </>
           ) : null}
         </section>
+
+        <footer className="dictionary-attribution">
+          <img
+            src="/merriam-webster-logo.png"
+            alt="Merriam-Webster"
+            width="50"
+            height="50"
+          />
+          <span>Merriam-Webster's Collegiate® Dictionary</span>
+        </footer>
       </section>
     </main>
   )
