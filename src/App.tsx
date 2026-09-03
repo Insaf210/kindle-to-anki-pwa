@@ -25,17 +25,19 @@ const phraseSuggestionPatterns = [
   /\bas\s+soon\s+as\b/gi,
   /\beven\s+though\b/gi,
 ]
-const allowedLanguageStyles = [
-  'simple',
-  'everyday',
-  'formal',
-  'informal',
-  'slang',
-  'business',
-  'academic',
+const allowedLearningTiers = ['everyday', 'standard', 'advanced'] as const
+const allowedRegisters = ['neutral', 'informal', 'formal', 'slang'] as const
+const allowedDomains = ['business', 'academic', 'technical'] as const
+const allowedUsageWarnings = [
   'literary',
-  'advanced',
-]
+  'dated',
+  'archaic',
+  'vulgar-offensive',
+] as const
+type LearningTier = (typeof allowedLearningTiers)[number]
+type UsageRegister = (typeof allowedRegisters)[number]
+type UsageDomain = (typeof allowedDomains)[number]
+type UsageWarning = (typeof allowedUsageWarnings)[number]
 const allowedPartsOfSpeech = [
   'noun',
   'proper-noun',
@@ -62,6 +64,10 @@ const allowedExpressionTypes = [
 const allowedSuggestedTags = [
   ...allowedPartsOfSpeech,
   ...allowedExpressionTypes,
+  ...allowedLearningTiers,
+  ...allowedRegisters.filter((value) => value !== 'neutral'),
+  ...allowedDomains,
+  ...allowedUsageWarnings,
 ]
 const allowedSuggestedTagSet = new Set(allowedSuggestedTags)
 
@@ -81,7 +87,10 @@ type SavedCard = {
 type TranslationResult = {
   meaning: string
   explanation: string
-  languageStyle?: string
+  learningTier: LearningTier | null
+  register: UsageRegister | null
+  domains: UsageDomain[]
+  usageWarnings: UsageWarning[]
   suggestedTags: string[]
   provider?: 'ai' | 'translator'
 }
@@ -150,7 +159,7 @@ function cleanSuggestedTags(value: unknown) {
     .map((tag) => tag.trim().toLowerCase())
     .filter((tag) => allowedSuggestedTagSet.has(tag))
 
-  return Array.from(new Set(cleanedTags)).slice(0, 4)
+  return Array.from(new Set(cleanedTags))
 }
 
 function escapeCsvValue(value: string | number | null | undefined) {
@@ -272,56 +281,34 @@ function findLocalPhraseSuggestions(sentence: string) {
   return Array.from(new Set(foundPhrases))
 }
 
-function inferLanguageStyle(targetWord: string, sentence: string) {
-  const normalizedText = normalizeValue(`${targetWord} ${sentence}`)
-
-  if (/\b(kinda|gonna|wanna|ain't|dude|yep|nah)\b/.test(normalizedText)) {
-    return 'slang'
+function cleanUsageValue<T extends string>(
+  value: unknown,
+  allowedValues: readonly T[],
+) {
+  if (typeof value !== 'string') {
+    return null
   }
 
-  if (/\b(cool|okay|ok|pretty much|hang out)\b/.test(normalizedText)) {
-    return 'informal'
-  }
-
-  if (/\b(revenue|profit|market|company|growth|strategy|customer|sustainable growth)\b/.test(normalizedText)) {
-    return 'business'
-  }
-
-  if (/\b(research|theory|analysis|hypothesis|method|evidence|emphasized|significant)\b/.test(normalizedText)) {
-    return 'academic'
-  }
-
-  if (/\b(thou|whilst|upon|beneath|amid|overcame|gazed|whispered)\b/.test(normalizedText)) {
-    return 'literary'
-  }
-
-  if (/\b(hence|therefore|moreover|subsequently|nevertheless|emphasized)\b/.test(normalizedText)) {
-    return 'formal'
-  }
-
-  if (targetWord.length > 9 || targetWord.split(/\s+/).length > 2) {
-    return 'advanced'
-  }
-
-  return 'everyday'
+  const cleanedValue = normalizeValue(value)
+  return allowedValues.includes(cleanedValue as T)
+    ? (cleanedValue as T)
+    : null
 }
 
-function cleanLanguageStyle(
-  value: string | undefined,
-  targetWord: string,
-  sentence: string,
+function cleanUsageArray<T extends string>(
+  value: unknown,
+  allowedValues: readonly T[],
 ) {
-  const normalizedStyle = normalizeValue(value || '')
-
-  if (
-    normalizedStyle &&
-    normalizedStyle !== 'simple' &&
-    allowedLanguageStyles.includes(normalizedStyle)
-  ) {
-    return normalizedStyle
+  if (!Array.isArray(value)) {
+    return []
   }
 
-  return inferLanguageStyle(targetWord, sentence)
+  const cleanedValues = value
+    .filter((item): item is string => typeof item === 'string')
+    .map((item) => normalizeValue(item))
+    .filter((item): item is T => allowedValues.includes(item as T))
+
+  return Array.from(new Set(cleanedValues))
 }
 
 function isValidBackupCard(card: unknown): card is SavedCard {
@@ -849,7 +836,10 @@ function App() {
         [translationKey]: {
           meaning: currentTranslation?.meaning || '',
           explanation: currentTranslation?.explanation || '',
-          languageStyle: currentTranslation?.languageStyle || 'simple',
+          learningTier: currentTranslation?.learningTier ?? null,
+          register: currentTranslation?.register ?? null,
+          domains: currentTranslation?.domains || [],
+          usageWarnings: currentTranslation?.usageWarnings || [],
           suggestedTags: currentTranslation?.suggestedTags || [],
           provider: currentTranslation?.provider,
           [field]: value,
@@ -888,7 +878,7 @@ function App() {
         ...currentTranslations,
         [translationKey]: {
           ...translation,
-          suggestedTags: [...translation.suggestedTags, cleanedTag].slice(0, 4),
+          suggestedTags: [...translation.suggestedTags, cleanedTag],
         },
       }
     })
@@ -1111,19 +1101,30 @@ function App() {
             provider === 'translator' && currentTranslation?.suggestedTags.length
               ? currentTranslation.suggestedTags
               : suggestedTags
-          const languageStyle =
-            provider === 'translator' && currentTranslation?.languageStyle
-              ? currentTranslation.languageStyle
-              : cleanLanguageStyle(
-                  data.languageStyle,
-                  targetWord,
-                  cleanedSentence,
-                )
+          const learningTier =
+            provider === 'translator'
+              ? currentTranslation?.learningTier ?? null
+              : cleanUsageValue(data.learningTier, allowedLearningTiers)
+          const register =
+            provider === 'translator'
+              ? currentTranslation?.register ?? null
+              : cleanUsageValue(data.register, allowedRegisters)
+          const domains =
+            provider === 'translator'
+              ? currentTranslation?.domains || []
+              : cleanUsageArray(data.domains, allowedDomains)
+          const usageWarnings =
+            provider === 'translator'
+              ? currentTranslation?.usageWarnings || []
+              : cleanUsageArray(data.usageWarnings, allowedUsageWarnings)
           const generatedTranslation: TranslationResult = {
             meaning: data.meaning,
             explanation:
               typeof data.explanation === 'string' ? data.explanation : '',
-            languageStyle,
+            learningTier,
+            register,
+            domains,
+            usageWarnings,
             suggestedTags: parsedSuggestedTags,
             provider,
           }
@@ -1204,7 +1205,6 @@ function App() {
       targetWord,
       meaning: translation.meaning,
       explanation: translation.explanation,
-      languageStyle: translation.languageStyle || 'simple',
       source: sessionSource.trim() || 'Kindle',
       tags: translation.suggestedTags.join(' '),
       createdAt: new Date().toISOString(),
@@ -1307,7 +1307,6 @@ function App() {
         targetWord,
         meaning: translation.meaning,
         explanation: translation.explanation,
-        languageStyle: translation.languageStyle || 'simple',
         source: cleanedSource,
         tags: translation.suggestedTags.join(' '),
         createdAt,
@@ -1784,11 +1783,6 @@ function App() {
                         rows={3}
                       />
                     </label>
-                    {translation?.languageStyle ? (
-                      <p className="result-style">
-                        Style: {translation.languageStyle}
-                      </p>
-                    ) : null}
                     <div className="tag-editor">
                       <p className="result-style">Tags</p>
                       {translation?.suggestedTags.length ? (
@@ -2116,18 +2110,20 @@ function App() {
                               }
                             />
                           </label>
-                          <label>
-                            Language style
-                            <input
-                              value={editDraft.languageStyle || ''}
-                              onChange={(event) =>
-                                updateEditDraft(
-                                  'languageStyle',
-                                  event.target.value,
-                                )
-                              }
-                            />
-                          </label>
+                          {editDraft.languageStyle ? (
+                            <label>
+                              Legacy language style
+                              <input
+                                value={editDraft.languageStyle || ''}
+                                onChange={(event) =>
+                                  updateEditDraft(
+                                    'languageStyle',
+                                    event.target.value,
+                                  )
+                                }
+                              />
+                            </label>
+                          ) : null}
                           <div className="card-action-row">
                             <button
                               className="save-edit-button"
@@ -2198,7 +2194,7 @@ function App() {
                           ) : null}
                           {card.languageStyle ? (
                             <p className="card-tags">
-                              Style:{' '}
+                              Legacy style:{' '}
                               {highlightSearchText(
                                 card.languageStyle,
                                 cardSearch,
