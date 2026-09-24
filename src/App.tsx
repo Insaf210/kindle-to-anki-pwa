@@ -1,4 +1,4 @@
-import { useRef, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import './App.css'
 
 const initialSentence = ''
@@ -10,6 +10,7 @@ const ankiMobileDeckName = 'English Vocab'
 const ankiMobileNoteType = 'com.example.kindle_to_anki.basic'
 const backupReminderCardCount = 50
 const recentBackupDays = 7
+const appStartedAt = Date.now()
 const phraseSuggestionPatterns = [
   /\blook(?:s|ed|ing)?\s+forward\s+to\b/gi,
   /\bgive(?:s|n|ing)?\s+up\b|\bgave\s+up\b/gi,
@@ -116,6 +117,41 @@ type BackupData = {
     }>
   }
 }
+
+function loadSavedCardsFromStorage(): SavedCard[] {
+  try {
+    const savedCards = window.localStorage.getItem(cardsStorageKey)
+
+    if (!savedCards) {
+      return []
+    }
+
+    const parsedCards = JSON.parse(savedCards)
+
+    if (!Array.isArray(parsedCards)) {
+      return []
+    }
+
+    return (parsedCards as SavedCard[]).map((card) => ({
+      ...card,
+      tags: card.tags || '',
+      exportedAt: card.exportedAt ?? null,
+    }))
+  } catch {
+    return []
+  }
+}
+
+function loadLastBackupExportAtFromStorage() {
+  try {
+    return window.localStorage.getItem(lastBackupStorageKey) || ''
+  } catch {
+    return ''
+  }
+}
+
+const initialSavedCards = loadSavedCardsFromStorage()
+const initialLastBackupExportAt = loadLastBackupExportAtFromStorage()
 
 function normalizeValue(value: string) {
   return value.trim().toLowerCase().replace(/\s+/g, ' ')
@@ -473,8 +509,7 @@ function App() {
   const [translationNotice, setTranslationNotice] = useState('')
   const [ankiNotice, setAnkiNotice] = useState('')
   const [isSendingToAnki, setIsSendingToAnki] = useState(false)
-  const [cards, setCards] = useState<SavedCard[]>([])
-  const [cardsLoaded, setCardsLoaded] = useState(false)
+  const [cards, setCards] = useState<SavedCard[]>(initialSavedCards)
   const [isCardsExpanded, setIsCardsExpanded] = useState(false)
   const [cardSearch, setCardSearch] = useState('')
   const [cardSearchMode, setCardSearchMode] =
@@ -484,7 +519,9 @@ function App() {
   const [editingCardId, setEditingCardId] = useState('')
   const [editDraft, setEditDraft] = useState<SavedCard | null>(null)
   const [lastDeletedCard, setLastDeletedCard] = useState<SavedCard | null>(null)
-  const [lastBackupExportAt, setLastBackupExportAt] = useState('')
+  const [lastBackupExportAt, setLastBackupExportAt] = useState(
+    initialLastBackupExportAt,
+  )
   const [selectedCardIds, setSelectedCardIds] = useState<string[]>([])
   const [savedCardsError, setSavedCardsError] = useState('')
 
@@ -499,51 +536,15 @@ function App() {
   )
   const backupIsRecent =
     Boolean(lastBackupExportAt) &&
-    Date.now() - new Date(lastBackupExportAt).getTime() <
+    appStartedAt - new Date(lastBackupExportAt).getTime() <
       recentBackupDays * 24 * 60 * 60 * 1000
   const shouldShowBackupReminder =
     cards.length >= backupReminderCardCount ||
     (Boolean(lastBackupExportAt) && !backupIsRecent)
 
   useEffect(() => {
-    const savedCards = localStorage.getItem(cardsStorageKey)
-    const savedLastBackupExportAt = localStorage.getItem(lastBackupStorageKey)
-
-    if (savedLastBackupExportAt) {
-      setLastBackupExportAt(savedLastBackupExportAt)
-    }
-
-    if (!savedCards) {
-      setCardsLoaded(true)
-      return
-    }
-
-    try {
-      const parsedCards = JSON.parse(savedCards)
-
-      if (Array.isArray(parsedCards)) {
-        setCards(
-          (parsedCards as SavedCard[]).map((card) => ({
-            ...card,
-            tags: card.tags || '',
-            exportedAt: card.exportedAt ?? null,
-          })),
-        )
-      }
-    } catch {
-      localStorage.removeItem(cardsStorageKey)
-    }
-
-    setCardsLoaded(true)
-  }, [])
-
-  useEffect(() => {
-    if (!cardsLoaded) {
-      return
-    }
-
     localStorage.setItem(cardsStorageKey, JSON.stringify(cards))
-  }, [cards, cardsLoaded])
+  }, [cards])
 
   useEffect(() => {
     function updateConnectionStatus() {
@@ -565,7 +566,7 @@ function App() {
     }
   }, [])
 
-  function resetSentenceWork(nextSentence: string) {
+  const resetSentenceWork = useCallback((nextSentence: string) => {
     sentenceRef.current = nextSentence
     setSentence(nextSentence)
     setSelectedWords([])
@@ -578,7 +579,7 @@ function App() {
     setPhraseSuggestions([])
     setTranslations({})
     setTranslationManualEdits({})
-  }
+  }, [])
 
   useEffect(() => {
     const currentUrl = new URL(window.location.href)
@@ -590,14 +591,27 @@ function App() {
     currentUrl.searchParams.delete('ankiResult')
     window.history.replaceState(null, '', currentUrl.toString())
 
-    setSentences([])
-    setCurrentSentenceIndex(0)
-    setTagDrafts({})
-    manualSentenceControlRef.current = false
-    resetSentenceWork('')
-    setAnkiNotice('Karte zu Anki hinzugefügt.')
-    isSendingToAnkiRef.current = false
-    setIsSendingToAnki(false)
+    queueMicrotask(() => {
+      sentenceRef.current = ''
+      setSentence('')
+      setSelectedWords([])
+      setClipboardError('')
+      setCardError('')
+      setExportError('')
+      setBackupError('')
+      setTranslationError('')
+      setTranslationNotice('')
+      setPhraseSuggestions([])
+      setTranslations({})
+      setTranslationManualEdits({})
+      setSentences([])
+      setCurrentSentenceIndex(0)
+      setTagDrafts({})
+      manualSentenceControlRef.current = false
+      setAnkiNotice('Karte zu Anki hinzugefügt.')
+      isSendingToAnkiRef.current = false
+      setIsSendingToAnki(false)
+    })
   }, [])
 
   useEffect(() => {
@@ -651,7 +665,7 @@ function App() {
     }
   }
 
-  function rememberConsumedClipboard(value: string) {
+  const rememberConsumedClipboard = useCallback((value: string) => {
     const cleanedValue = value.trim()
 
     if (!cleanedValue) {
@@ -665,20 +679,20 @@ function App() {
     } catch {
       // The in-memory ref still protects the current page lifecycle.
     }
-  }
+  }, [])
 
-  function updateSentence(nextSentence: string) {
+  const updateSentence = useCallback((nextSentence: string) => {
     setSentences([])
     setCurrentSentenceIndex(0)
     resetSentenceWork(nextSentence)
-  }
+  }, [resetSentenceWork])
 
   function handleSentenceChange(nextSentence: string) {
     manualSentenceControlRef.current = true
     updateSentence(nextSentence)
   }
 
-  function applyPastedText(nextSentence: string) {
+  const applyPastedText = useCallback((nextSentence: string) => {
     const pastedSentences = splitTextIntoSentences(nextSentence)
 
     rememberConsumedClipboard(nextSentence)
@@ -691,7 +705,7 @@ function App() {
     }
 
     updateSentence(nextSentence)
-  }
+  }, [rememberConsumedClipboard, resetSentenceWork, updateSentence])
 
   useEffect(() => {
     let isDisposed = false
@@ -748,7 +762,7 @@ function App() {
       document.removeEventListener('visibilitychange', handleAppActive)
       window.removeEventListener('focus', detectClipboardText)
     }
-  }, [])
+  }, [applyPastedText])
 
   function handleSentencePaste(
     event: React.ClipboardEvent<HTMLTextAreaElement>,
@@ -1541,7 +1555,6 @@ function App() {
 
       setCards(importedCards)
       localStorage.setItem(cardsStorageKey, JSON.stringify(importedCards))
-      setCardsLoaded(true)
       setBackupError('')
     } catch {
       setBackupError('Backup konnte nicht importiert werden. Bitte w\u00e4hle eine g\u00fcltige JSON-Datei.')
